@@ -19,14 +19,12 @@ export default function App() {
     executeTrim,
     executeFillet,
     executeUnion,
+    executeSubtract,
+    executeCopy,
+    executePaste,
     undo,
     redo
   } = useCADEngine();
-
-  // Explicit fallback trigger for a 2D/3D solid subtraction matrix operation
-  const handleSubtract = () => {
-    alert("Select two overlapping shapes on your grid workspace to compute a solid Subtraction path cut.");
-  };
 
   return (
     <div style={{
@@ -99,7 +97,7 @@ export default function App() {
         fontFamily: 'monospace',
         borderBottom: '1px solid #1e293b'
       }}>
-        Console: {hudFeedback}
+        {hudFeedback}
       </div>
 
       {/* INTERACTIVE WORKSPACE VIEWPORT GRID LAYER */}
@@ -175,7 +173,7 @@ export default function App() {
             </button>
             
             {/* 3D Extrusion Solid Modeling Operator */}
-            <button onClick={() => executeExtrude(null, 50)} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #701a75', backgroundColor: '#a21caf', color: '#fff', cursor: 'pointer' }}>
+            <button onClick={executeExtrude} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #701a75', backgroundColor: '#a21caf', color: '#fff', cursor: 'pointer' }}>
               📦 EXTRUDE
             </button>
 
@@ -191,24 +189,42 @@ export default function App() {
             <button onClick={executeUnion} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #115e59', backgroundColor: '#0f766e', color: '#fff', cursor: 'pointer' }}>
               ➕ UNION
             </button>
-            <button onClick={handleSubtract} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #991b1b', backgroundColor: '#dc2626', color: '#fff', cursor: 'pointer' }}>
+            <button onClick={executeSubtract} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #991b1b', backgroundColor: '#dc2626', color: '#fff', cursor: 'pointer' }}>
               ➖ SUBTRACT
             </button>
           </div>
 
-          {/* DOCK FOOTER: DESELECT CONTEXT CLEARING & CANVASE ERASE COMMAND */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px', borderTop: '1px solid #334155' }}>
+          {/* DOCK FOOTER: DESELECT CONTEXT CLEARING, TRANSFORMS & CANVASE ERASE COMMAND */}
+          <div style={{ display: 'flex', gap: '6px', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px', borderTop: '1px solid #334155' }}>
+            <button 
+              onClick={() => setCurrentTool('move' as any)}
+              style={{ 
+                padding: '6px 10px', 
+                fontSize: '11px', 
+                backgroundColor: (currentTool as string) === 'move' ? '#10b981' : '#475569', 
+                color: '#fff', 
+                border: 'none', 
+                borderRadius: '4px', 
+                cursor: 'pointer',
+                fontWeight: 'bold'
+              }}
+            >
+              🗺️ Move
+            </button>
+            <button onClick={executeCopy} style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📋 Copy</button>
+            <button onClick={executePaste} style={{ padding: '6px 10px', fontSize: '11px', backgroundColor: '#0ea5e9', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📥 Paste</button>
+            
             <button 
               onClick={() => setCurrentTool('deselect' as any)} 
-              style={{ padding: '6px 12px', fontSize: '11px', backgroundColor: '#64748b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+              style={{ padding: '6px 8px', fontSize: '11px', backgroundColor: '#64748b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
             >
               Reset Chain
             </button>
             <button 
               onClick={executeErase} 
-              style={{ padding: '6px 16px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e11d48', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+              style={{ padding: '6px 12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e11d48', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
             >
-              🗑️ Erase Item
+              🗑️ Erase
             </button>
           </div>
 
