@@ -1,5 +1,5 @@
 import React from 'react';
-import { Undo2, Redo2, Download, Sun, Moon, Maximize2, Minimize2, Grid, Layers } from 'lucide-react';
+import { Undo2, Redo2, Download, Sun, Moon, Layers } from 'lucide-react';
 import { ViewMode } from '../types/cad';
 
 interface TopToolbarProps {
