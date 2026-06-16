@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-// Local Explicit Declarations to Guarantee Type Safety in Build Environments
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
-export type ToolType = string; // Broadened to string to completely eliminate TS2367 comparison errors
+export type ToolType = string;
 
 export interface Point2D {
   x: number;
@@ -28,17 +27,21 @@ export function useCADEngine() {
   const [currentTool, setCurrentTool] = useState<ToolType>('select');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('Console: Active Engine Online');
+  const [hudFeedback, setHudFeedback] = useState<string>('Console: Select Units to Begin Workspace Initialization');
 
-  // Core Clipboard & Environment Configuration Values
+  // Dimension Calibration States
+  const [unit, setUnit] = useState<string>('mm');
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+  const [orthoMode, setOrthoMode] = useState<boolean>(false);
+  const [workspaceSize, setWorkspaceSize] = useState<number>(400);
+  const [gridSpacing, setGridSpacing] = useState<number>(10);
+
+  // Core Storage & Clipboard Trackers
   const [clipboard, setClipboard] = useState<CADObject | null>(null);
-  const [workspaceSize, setWorkspaceSize] = useState<number>(600);
-
-  // Undo / Redo Stacks
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // Drawing State Interaction Trackers
+  // Protected Gesture Pointer References (Solves the Disappearing Touch Bug)
   const isDrawingRef = useRef<boolean>(false);
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
@@ -46,14 +49,14 @@ export function useCADEngine() {
   const moveStartPointRef = useRef<Point2D | null>(null);
   const polylinePointsRef = useRef<Point2D[]>([]);
 
-  // Navigation Camera Transformations
+  // Smooth View Matrix Viewport Vectors
   const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
-  const cameraZoomRef = useRef<number>(1.0);
+  const cameraZoomRef = useRef<number>(1.2);
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const lastTouchDistanceRef = useRef<number | null>(null);
 
-  // Three.js Core Systems Graph Reference Nodes
+  // Three.js Pipeline Structural Nodes
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -63,7 +66,27 @@ export function useCADEngine() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // Initialize WebGL Context Setup Window Loop
+  // Step 1: Unit Configuration Prompt on Mount
+  useEffect(() => {
+    const selectedUnit = prompt("Specify primary drawing workspace dimensions unit system (mm, cm, m, foot):", "mm");
+    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) {
+      const u = selectedUnit.toLowerCase();
+      setUnit(u);
+      let spacing = 10;
+      let totalSize = 500;
+      if (u === 'cm') { spacing = 5; totalSize = 300; }
+      else if (u === 'm') { spacing = 1; totalSize = 50; }
+      else if (u === 'foot') { spacing = 1; totalSize = 100; }
+      setGridSpacing(spacing);
+      setWorkspaceSize(totalSize);
+      setHudFeedback(`Workspace configured: ${u.toUpperCase()} Mode. Grid spacing set to 1 ${u}.`);
+    } else {
+      setUnit('mm');
+      setHudFeedback('Workspace: Default MM Configuration Active.');
+    }
+  }, []);
+
+  // WebGL Renderer Lifecycle Mount Context
   useEffect(() => {
     if (!containerRef.current) return;
     const width = containerRef.current.clientWidth || window.innerWidth;
@@ -82,12 +105,14 @@ export function useCADEngine() {
     cameraRef.current = camera;
     syncCameraMatrix();
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.8);
-    dl.position.set(200, 400, 200);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.75);
+    dl.position.set(150, 350, 150);
     scene.add(dl);
 
-    const grid = new THREE.GridHelper(workspaceSize, 120, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+    // Initial Grid Compilation
+    const divisions = Math.round(workspaceSize / gridSpacing);
+    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
     scene.add(grid);
     gridHelperRef.current = grid;
 
@@ -109,7 +134,7 @@ export function useCADEngine() {
     const host = containerRef.current;
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.1 : 0.9), 30.0));
+      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
       syncCameraMatrix();
     };
     host.addEventListener('wheel', handleWheel, { passive: false });
@@ -119,32 +144,34 @@ export function useCADEngine() {
       if (host) host.removeEventListener('wheel', handleWheel);
       renderer.dispose();
     };
-  }, []);
+  }, [workspaceSize, gridSpacing]);
 
-  // Sync Dynamic Workplace Grid Adjustments
+  // Synchronize Dark Mode Theme Flips Across Grid Networks
   useEffect(() => {
     if (gridHelperRef.current && sceneRef.current) {
       sceneRef.current.remove(gridHelperRef.current);
-      const grid = new THREE.GridHelper(workspaceSize, Math.round(workspaceSize / 5), 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+      const divisions = Math.round(workspaceSize / gridSpacing);
+      const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
       sceneRef.current.add(grid);
       gridHelperRef.current = grid;
+      sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
     }
-  }, [workspaceSize, isDarkMode]);
+  }, [isDarkMode, workspaceSize, gridSpacing]);
 
-  // Zero-Lag Fluid Camera Vector Matrix Viewport Execution Engine
+  // Zero-Lag Direct Matrix Refresh Pipeline (Eliminates view switching stutter)
   const syncCameraMatrix = () => {
     if (!cameraRef.current) return;
     const offset = cameraOffsetRef.current;
-    const targetDistance = 200 * cameraZoomRef.current;
+    const dist = 240 * cameraZoomRef.current;
 
     if (viewMode === 'top') {
-      cameraRef.current.position.set(offset.x, targetDistance, offset.z + 0.001);
+      cameraRef.current.position.set(offset.x, dist, offset.z + 0.001);
     } else if (viewMode === 'front') {
-      cameraRef.current.position.set(offset.x, offset.y, targetDistance);
+      cameraRef.current.position.set(offset.x, offset.y, dist);
     } else if (viewMode === 'side') {
-      cameraRef.current.position.set(targetDistance, offset.y, offset.z);
+      cameraRef.current.position.set(dist, offset.y, offset.z);
     } else {
-      cameraRef.current.position.set(offset.x + targetDistance * 0.7, offset.y + targetDistance * 0.7, offset.z + targetDistance * 0.7);
+      cameraRef.current.position.set(offset.x + dist * 0.7, offset.y + dist * 0.7, offset.z + dist * 0.7);
     }
     cameraRef.current.lookAt(offset.x, offset.y, offset.z);
     cameraRef.current.updateProjectionMatrix();
@@ -186,7 +213,6 @@ export function useCADEngine() {
         const vecPoints: THREE.Vector3[] = [];
         obj.points.forEach((p) => vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
         
-        // Pure String evaluations circumvent compiler overlap warnings cleanly
         if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
           vecPoints.push(vecPoints[0].clone());
         }
@@ -196,23 +222,30 @@ export function useCADEngine() {
         line.renderOrder = 10;
         group.add(line);
 
-        // Append Spatial Label Engine Overlays
+        // Append Clear Spatial Measurement Labels
         if (isSelected && obj.points.length >= 2) {
           const p1 = obj.points[0];
           const p2 = obj.points[obj.points.length - 1];
-          const calculatedDistance = Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y));
+          let measurementText = '';
+          
+          if (obj.type === 'circle' && obj.properties?.radius) {
+            measurementText = `R:${obj.properties.radius}${unit} D:${obj.properties.radius * 2}${unit}`;
+          } else {
+            const lenValue = Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y));
+            measurementText = `${lenValue}${unit}`;
+          }
           
           const canvas = document.createElement('canvas');
-          canvas.width = 128; canvas.height = 64;
+          canvas.width = 160; canvas.height = 64;
           const ctx = canvas.getContext('2d');
           if (ctx) {
-            ctx.fillStyle = '#f59e0b'; ctx.font = 'bold 24px monospace';
-            ctx.fillText(`${calculatedDistance}u`, 10, 40);
+            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace';
+            ctx.fillText(measurementText, 5, 36);
             const texture = new THREE.CanvasTexture(canvas);
             const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
             const sprite = new THREE.Sprite(spriteMat);
             sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2);
-            sprite.scale.set(15, 7.5, 1);
+            sprite.scale.set(18, 9, 1);
             group.add(sprite);
           }
         }
@@ -221,8 +254,9 @@ export function useCADEngine() {
       sceneRef.current.add(group);
       visualObjectsRef.current.set(obj.id, group);
     });
-  }, [objects, selectedId]);
+  }, [objects, selectedId, unit]);
 
+  // Precision coordinate projection mechanics
   const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
     if (!containerRef.current || !cameraRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
@@ -239,9 +273,16 @@ export function useCADEngine() {
     const plane = new THREE.Plane(norm, 0);
     const intersect = new THREE.Vector3();
     if (raycaster.ray.intersectPlane(plane, intersect)) {
-      if (viewMode === 'front') return { x: Math.round(intersect.x), y: Math.round(intersect.y) };
-      if (viewMode === 'side') return { x: Math.round(intersect.z), y: Math.round(intersect.y) };
-      return { x: Math.round(intersect.x), y: Math.round(intersect.z) };
+      let calcX = intersect.x;
+      let calcY = (viewMode === 'front' || viewMode === 'side') ? intersect.y : intersect.z;
+
+      // Handle Snap-To-Grid Checks
+      if (snapToGrid) {
+        calcX = Math.round(calcX / gridSpacing) * gridSpacing;
+        calcY = Math.round(calcY / gridSpacing) * gridSpacing;
+      }
+
+      return { x: calcX, y: calcY };
     }
     return null;
   };
@@ -257,14 +298,14 @@ export function useCADEngine() {
     if (!pts) return;
 
     if (currentTool === 'select') {
-      const found = objects.find((o) => o.points.some((p) => Math.abs(p.x - pts.x) < 25 && Math.abs(p.y - pts.y) < 25));
+      const found = objects.find((o) => o.points.some((p) => Math.abs(p.x - pts.x) < (gridSpacing * 2.5) && Math.abs(p.y - pts.y) < (gridSpacing * 2.5)));
       setSelectedId(found ? found.id : null);
-      if (found) setHudFeedback(`Console: Selected [${found.type.toUpperCase()}] ID: ${found.id}`);
+      if (found) setHudFeedback(`Selected [${found.type.toUpperCase()}] ID: ${found.id}. Adjust specifications above if needed.`);
       return;
     }
 
     if (currentTool === 'move') {
-      if (!selectedId) { setHudFeedback("Console: Error - Select a target profile shape first to execute Move translation."); return; }
+      if (!selectedId) { setHudFeedback("Console: Select an item mesh target profile first to execute Move translation."); return; }
       isDrawingRef.current = true;
       moveStartPointRef.current = pts;
       return;
@@ -272,9 +313,7 @@ export function useCADEngine() {
 
     isDrawingRef.current = true;
     if (currentTool === 'polyline') {
-      if (polylinePointsRef.current.length === 0) {
-        polylinePointsRef.current.push(pts);
-      }
+      if (polylinePointsRef.current.length === 0) { polylinePointsRef.current.push(pts); }
       startPointRef.current = polylinePointsRef.current[polylinePointsRef.current.length - 1];
     } else {
       startPointRef.current = chainAnchorRef.current ? chainAnchorRef.current : pts;
@@ -286,18 +325,29 @@ export function useCADEngine() {
     if (isPanningRef.current) {
       const dx = clientX - panStartRef.current.x; const dy = clientY - panStartRef.current.y;
       panStartRef.current = { x: clientX, y: clientY };
-      const f = 0.4 * cameraZoomRef.current;
-      if (viewMode === 'top') { cameraOffsetRef.current.x -= dx * f; cameraOffsetRef.current.z -= dy * f; }
-      else if (viewMode === 'front') { cameraOffsetRef.current.x -= dx * f; cameraOffsetRef.current.y += dy * f; }
-      else if (viewMode === 'side') { cameraOffsetRef.current.z += dx * f; cameraOffsetRef.current.y += dy * f; }
-      else { cameraOffsetRef.current.x -= dx * f * 0.7; cameraOffsetRef.current.z -= dy * f * 0.7; }
+      const factor = 0.35 * cameraZoomRef.current;
+      if (viewMode === 'top') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.z -= dy * factor; }
+      else if (viewMode === 'front') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.y += dy * factor; }
+      else if (viewMode === 'side') { cameraOffsetRef.current.z += dx * factor; cameraOffsetRef.current.y += dy * factor; }
+      else { cameraOffsetRef.current.x -= dx * factor * 0.7; cameraOffsetRef.current.z -= dy * factor * 0.7; }
       syncCameraMatrix();
       return;
     }
 
-    if (!isDrawingRef.current) return;
-    const pts = get3DPoint(clientX, clientY);
+    if (!isDrawingRef.current || !startPointRef.current) return;
+    let pts = get3DPoint(clientX, clientY);
     if (!pts) return;
+
+    // Handle Precision Ortho Snapping Math Locks
+    if (orthoMode && currentTool !== 'move') {
+      const dx = Math.abs(pts.x - startPointRef.current.x);
+      const dy = Math.abs(pts.y - startPointRef.current.y);
+      if (dx > dy) {
+        pts = { x: pts.x, y: startPointRef.current.y };
+      } else {
+        pts = { x: startPointRef.current.x, y: pts.y };
+      }
+    }
 
     if (currentTool === 'move' && moveStartPointRef.current && selectedId) {
       const dx = pts.x - moveStartPointRef.current.x; const dy = pts.y - moveStartPointRef.current.y;
@@ -306,7 +356,6 @@ export function useCADEngine() {
       return;
     }
 
-    if (!startPointRef.current) return;
     currentPointRef.current = pts;
     const origin = startPointRef.current;
     const len = Math.round(Math.hypot(pts.x - origin.x, pts.y - origin.y));
@@ -318,8 +367,8 @@ export function useCADEngine() {
       } else if (currentTool === 'rectangle') {
         pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
       } else if (currentTool === 'circle' || currentTool === 'polygon') {
-        const s = currentTool === 'circle' ? 36 : 3;
-        for (let i = 0; i <= s; i++) { const t = (i / s) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(t) * len, 0.6, origin.y + Math.sin(t) * len)); }
+        const sides = currentTool === 'circle' ? 32 : 3;
+        for (let i = 0; i <= sides; i++) { const alpha = (i / sides) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
       }
       previewLineRef.current.geometry.setFromPoints(pPts);
     }
@@ -329,55 +378,89 @@ export function useCADEngine() {
     if (isPanningRef.current) { isPanningRef.current = false; return; }
     if (!isDrawingRef.current) return;
 
-    if (currentTool === 'move') { isDrawingRef.current = false; moveStartPointRef.current = null; updateHistory(objects); return; }
+    // Direct state decoupling prevents items from vanishing upon finger lift
+    isDrawingRef.current = false;
+
+    if (currentTool === 'move') { moveStartPointRef.current = null; updateHistory(objects); return; }
     if (!startPointRef.current || !currentPointRef.current) return;
 
     const origin = startPointRef.current;
-    const end = currentPointRef.current;
-    if (Math.abs(origin.x - end.x) < 2 && Math.abs(origin.y - end.y) < 2) return;
+    let end = currentPointRef.current;
+
+    if (orthoMode) {
+      const dx = Math.abs(end.x - origin.x); const dy = Math.abs(end.y - origin.y);
+      if (dx > dy) end = { x: end.x, y: origin.y };
+      else end = { x: origin.x, y: end.y };
+    }
 
     const len = Math.round(Math.hypot(end.x - origin.x, end.y - origin.y));
-    let newObj: CADObject | null = null;
+    if (len < 1) return;
 
-    if (currentTool === 'line') {
+    let newObj: CADObject | null = null;
+    const currentToolStr = currentTool as string;
+
+    if (currentToolStr === 'line') {
       newObj = { id: generateId(), type: 'line', points: [origin, end], color: '#3b82f6', layer: '0', is3D: false, properties: { length: len } };
       chainAnchorRef.current = end;
-      isDrawingRef.current = false;
-    } else if (currentTool === 'polyline') {
+    } else if (currentToolStr === 'polyline') {
       polylinePointsRef.current.push(end);
-      
-      // Fixed: Explicit type casting layout maps to safely avoid setObjects typing assertions
-      const currentPolylineList = [...polylinePointsRef.current];
+      const freezePoints = [...polylinePointsRef.current];
       setObjects((prev) => {
         const filtered = prev.filter(o => o.id !== 'active_pline');
-        const activeItem: CADObject = { id: 'active_pline', type: 'polyline', points: currentPolylineList, color: '#38bdf8', layer: '0', is3D: false, properties: {} };
-        return [...filtered, activeItem];
+        return [...filtered, { id: 'active_pline', type: 'polyline', points: freezePoints, color: '#38bdf8', layer: '0', is3D: false, properties: { length: len } }];
       });
       startPointRef.current = end;
+      isDrawingRef.current = true; // Retain system trace flag for polylines
       return; 
-    } else if (currentTool === 'rectangle') {
-      newObj = { id: generateId(), type: 'rectangle', points: [{ x: origin.x, y: origin.y }, { x: end.x, y: origin.y }, { x: end.x, y: end.y }, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false, properties: {} };
-      isDrawingRef.current = false;
-    } else if (currentTool === 'circle') {
+    } else if (currentToolStr === 'rectangle') {
+      const w = Math.abs(end.x - origin.x); const h = Math.abs(end.y - origin.y);
+      newObj = { id: generateId(), type: 'rectangle', points: [{ x: origin.x, y: origin.y }, { x: end.x, y: origin.y }, { x: end.x, y: end.y }, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false, properties: { width: w, height: h } };
+    } else if (currentToolStr === 'circle') {
       const pts: Point2D[] = [];
       for (let i = 0; i < 32; i++) { const a = (i / 32) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false, properties: { radius: len } };
-      isDrawingRef.current = false;
-    } else if (currentTool === 'polygon') {
+      newObj = { id: generateId(), type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false, properties: { radius: len, diameter: len * 2 } };
+    } else if (currentToolStr === 'polygon') {
       const pts: Point2D[] = [];
       for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false, properties: {} };
-      isDrawingRef.current = false;
+      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false, properties: { radius: len } };
     }
 
     if (newObj) {
       const next = [...objects.filter(o => o.id !== 'active_pline'), newObj];
       updateHistory(next);
-      setHudFeedback(`Console: Saved new ${newObj.type.toUpperCase()}`);
+      setSelectedId(newObj.id);
+      setHudFeedback(`Created ${newObj.type.toUpperCase()}. Use input boxes to change dimensions.`);
     }
 
     startPointRef.current = null; currentPointRef.current = null;
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  };
+
+  // SYSTEM MODIFICATION ENTRYWAYS (Allows adjustments post-creation)
+  const updateSelectedObjectDimensions = (propertyMap: Record<string, number>) => {
+    if (!selectedId) return;
+    const next = objects.map((obj) => {
+      if (obj.id !== selectedId) return obj;
+      const origin = obj.points[0] || { x: 0, y: 0 };
+      let updatedPoints = [...obj.points];
+
+      if (obj.type === 'circle' && propertyMap.radius) {
+        const r = propertyMap.radius;
+        updatedPoints = [];
+        for (let i = 0; i < 32; i++) { const a = (i / 32) * Math.PI * 2; updatedPoints.push({ x: origin.x + Math.cos(a) * r, y: origin.y + Math.sin(a) * r }); }
+        return { ...obj, points: updatedPoints, properties: { ...obj.properties, radius: r, diameter: r * 2 } };
+      }
+      
+      if (obj.type === 'rectangle' && (propertyMap.width || propertyMap.height)) {
+        const w = propertyMap.width || obj.properties?.width || 20;
+        const h = propertyMap.height || obj.properties?.height || 20;
+        updatedPoints = [{ x: origin.x, y: origin.y }, { x: origin.x + w, y: origin.y }, { x: origin.x + w, y: origin.y + h }, { x: origin.x, y: origin.y + h }];
+        return { ...obj, points: updatedPoints, properties: { ...obj.properties, width: w, height: h } };
+      }
+
+      return obj;
+    });
+    updateHistory(next);
   };
 
   const handleTouchStart = (e: TouchEvent) => {
@@ -395,47 +478,45 @@ export function useCADEngine() {
       const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2; const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const dx = midX - panStartRef.current.x; const dy = midY - panStartRef.current.y;
       panStartRef.current = { x: midX, y: midY };
-      cameraOffsetRef.current.x -= dx * 0.5 * cameraZoomRef.current; cameraOffsetRef.current.z -= dy * 0.5 * cameraZoomRef.current;
-      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      if (lastTouchDistanceRef.current) cameraZoomRef.current = Math.max(0.1, Math.min(cameraZoomRef.current * (lastTouchDistanceRef.current / d), 15.0));
-      lastTouchDistanceRef.current = d; syncCameraMatrix();
+      cameraOffsetRef.current.x -= dx * 0.4 * cameraZoomRef.current; cameraOffsetRef.current.z -= dy * 0.4 * cameraZoomRef.current;
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      if (lastTouchDistanceRef.current) cameraZoomRef.current = Math.max(0.1, Math.min(cameraZoomRef.current * (lastTouchDistanceRef.current / dist), 15.0));
+      lastTouchDistanceRef.current = dist; syncCameraMatrix();
     }
   };
 
   useEffect(() => {
-    const el = containerRef.current; if (!el) return;
-    const wDown = (e: MouseEvent) => handlePointerDown(e.clientX, e.clientY, e.button === 2);
-    const wMove = (e: MouseEvent) => handlePointerMove(e.clientX, e.clientY);
-    const wUp = () => handlePointerUp();
-    el.addEventListener('mousedown', wDown); window.addEventListener('mousemove', wMove); window.addEventListener('mouseup', wUp);
-    el.addEventListener('touchstart', handleTouchStart, { passive: true }); el.addEventListener('touchmove', handleTouchMove, { passive: true }); el.addEventListener('touchend', () => handlePointerUp(), { passive: true });
+    const element = containerRef.current; if (!element) return;
+    const mDown = (e: MouseEvent) => handlePointerDown(e.clientX, e.clientY, e.button === 2);
+    const mMove = (e: MouseEvent) => handlePointerMove(e.clientX, e.clientY);
+    const mUp = () => handlePointerUp();
+    element.addEventListener('mousedown', mDown); window.addEventListener('mousemove', mMove); window.addEventListener('mouseup', mUp);
+    element.addEventListener('touchstart', handleTouchStart, { passive: true }); element.addEventListener('touchmove', handleTouchMove, { passive: true }); element.addEventListener('touchend', () => handlePointerUp(), { passive: true });
     return () => {
-      el.removeEventListener('mousedown', wDown); window.removeEventListener('mousemove', wMove); window.removeEventListener('mouseup', wUp);
-      el.removeEventListener('touchstart', handleTouchStart); el.removeEventListener('touchmove', handleTouchMove);
+      element.removeEventListener('mousedown', mDown); window.removeEventListener('mousemove', mMove); window.removeEventListener('mouseup', mUp);
+      element.removeEventListener('touchstart', handleTouchStart); element.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [currentTool, objects, viewMode, selectedId]);
+  }, [currentTool, objects, viewMode, selectedId, snapToGrid, orthoMode]);
 
   // CAD TRANSFORM EXECUTION TOOLSETS
   const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Console: Cleared Workspace Grid."); };
-  const executeSaveProject = () => { localStorage.setItem('minicad_v2_save', JSON.stringify(objects)); setHudFeedback("Console: Saved Project As Dynamic Model Configuration."); };
-  const executeLoadProject = () => { const s = localStorage.getItem('minicad_v2_save'); if (s) { const p = JSON.parse(s); setObjects(p); setHistory([p]); setHistoryIndex(0); setHudFeedback("Console: Model loaded cleanly."); } };
+  const executeSaveProject = () => { localStorage.setItem('minicad_v2_save', JSON.stringify(objects)); setHudFeedback("Console: Saved Project Configuration File."); };
+  const executeLoadProject = () => { const save = localStorage.getItem('minicad_v2_save'); if (save) { const parsed = JSON.parse(save); setObjects(parsed); setHistory([parsed]); setHistoryIndex(0); setHudFeedback("Model loaded cleanly."); } };
   
-  const executeIncreaseWorkspace = () => { setWorkspaceSize(prev => prev + 400); setHudFeedback(`Console: Workspace expanded to size: ${workspaceSize + 400} units.`); };
+  const executeIncreaseWorkspace = () => { setWorkspaceSize(prev => prev + 200); setHudFeedback(`Workspace bounds extended to: ${workspaceSize + 200} units.`); };
 
   const executeExtrude = () => {
-    if (!selectedId) { setHudFeedback("Console: Error - Select a closed 2D element first."); return; }
-    const input = prompt("Enter precise extrusion height dimension parameter:", "50");
-    if (!input) return;
-    const h = parseFloat(input) || 50;
-    const next = objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: h } : o);
-    updateHistory(next); setViewMode('isometric'); setTimeout(() => syncCameraMatrix(), 10);
-    setHudFeedback(`Console: Processed dimensional extrusion depth: ${h}`);
+    if (!selectedId) { setHudFeedback("Console: Select a profile first."); return; }
+    const input = prompt("Enter precise extrusion depth dimension:", "40");
+    if (!input) return; const depth = parseFloat(input) || 40;
+    const next = objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o);
+    updateHistory(next); setViewMode('isometric'); setTimeout(() => syncCameraMatrix(), 15);
   };
 
   const executeTrim = () => {
     if (!selectedId) return;
     const next = objects.map(o => (o.id === selectedId && o.points.length > 2) ? { ...o, points: o.points.slice(0, -1) } : o);
-    updateHistory(next); setHudFeedback("Console: Sliced last element vector edge segment.");
+    updateHistory(next);
   };
 
   const executeExtend = () => {
@@ -443,59 +524,49 @@ export function useCADEngine() {
     const next = objects.map(o => {
       if (o.id === selectedId && o.points.length >= 2) {
         const last = o.points[o.points.length - 1]; const prev = o.points[o.points.length - 2];
-        const dx = last.x - prev.x; const dy = last.y - prev.y;
-        return { ...o, points: [...o.points, { x: last.x + dx * 0.5, y: last.y + dy * 0.5 }] };
+        return { ...o, points: [...o.points, { x: last.x + (last.x - prev.x) * 0.5, y: last.y + (last.y - prev.y) * 0.5 }] };
       }
       return o;
     });
-    updateHistory(next); setHudFeedback("Console: Extended vector path along tracking trajectory.");
+    updateHistory(next);
   };
 
-  // FULLY FUNCTIONAL MATHEMATICAL CORNER FILLET RADIAL ROUNDING
   const executeFillet = () => {
-    if (!selectedId) { setHudFeedback("Console: Select a poly element to round."); return; }
+    if (!selectedId) return;
     const target = objects.find(o => o.id === selectedId);
     if (!target || target.points.length < 3) return;
-    const input = prompt("Enter Fillet Corner Radius value:", "12");
-    if (!input) return; const radius = parseFloat(input) || 12;
+    const radiusInput = prompt("Enter Fillet Corner Radius value:", "10");
+    if (!radiusInput) return; const r = parseFloat(radiusInput) || 10;
 
     const fPts: Point2D[] = [];
-    const len = target.points.length;
-    for (let i = 0; i < len; i++) {
-      const p = target.points[i]; const next = target.points[(i + 1) % len];
-      fPts.push(p);
-      fPts.push({ x: p.x + (next.x - p.x) * 0.15, y: p.y + (next.y - p.y) * 0.15 });
+    const total = target.points.length;
+    for (let i = 0; i < total; i++) {
+      const current = target.points[i]; const nextItem = target.points[(i + 1) % total];
+      fPts.push(current);
+      fPts.push({ x: current.x + (nextItem.x - current.x) * 0.15, y: current.y + (nextItem.y - current.y) * 0.15 });
     }
-    const next = objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o);
-    updateHistory(next); setHudFeedback(`Console: Fillet corner loop applied smoothly at radius: ${radius}`);
+    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
   };
 
   const executeRotate = () => {
     if (!selectedId) return;
-    const input = prompt("Enter rotation degrees value (e.g. 45, 90, 180):", "45");
-    if (!input) return; const rad = (parseFloat(input) || 45) * Math.PI / 180;
+    const input = prompt("Enter rotation angle in degrees:", "90");
+    if (!input) return; const rad = (parseFloat(input) || 90) * Math.PI / 180;
     const cos = Math.cos(rad); const sin = Math.sin(rad);
-    const next = objects.map(o => {
-      if (o.id === selectedId) {
-        return { ...o, points: o.points.map(p => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos })) };
-      }
-      return o;
-    });
-    updateHistory(next); setHudFeedback("Console: Rotated object vectors around origin anchor.");
+    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos })) } : o));
   };
 
   const executeOffset = () => {
     if (!selectedId) return;
-    const input = prompt("Enter offset displacement length value:", "15");
-    if (!input) return; const off = parseFloat(input) || 15;
-    const next = objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x + off, y: p.y + off })) } : o);
-    updateHistory(next); setHudFeedback(`Console: Multi-line vector profile offset executed at depth: ${off}`);
+    const input = prompt("Enter offset displacement length value:", "10");
+    if (!input) return; const off = parseFloat(input) || 10;
+    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x + off, y: p.y + off })) } : o));
   };
 
   const executePolarArray = () => {
     if (!selectedId) return;
-    const input = prompt("Enter absolute duplicate item count for circular layout array matrix:", "6");
-    if (!input) return; const total = parseInt(input) || 6;
+    const countInput = prompt("Enter copy replication count for circular layout pattern matrix:", "4");
+    if (!countInput) return; const total = parseInt(countInput) || 4;
     const target = objects.find(o => o.id === selectedId);
     if (!target) return;
 
@@ -503,87 +574,59 @@ export function useCADEngine() {
     for (let i = 1; i < total; i++) {
       const angle = (i / total) * Math.PI * 2;
       const cos = Math.cos(angle); const sin = Math.sin(angle);
-      arrayCopies.push({
-        ...target, id: generateId(),
-        points: target.points.map(p => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }))
-      });
+      arrayCopies.push({ ...target, id: generateId(), points: target.points.map(p => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos })) });
     }
-    updateHistory([...objects, ...arrayCopies]); setHudFeedback(`Console: Populated Polar circular pattern duplicate grid array matrix.`);
+    updateHistory([...objects, ...arrayCopies]);
   };
 
   const executeScale = () => {
     if (!selectedId) return;
-    const input = prompt("Enter dimensional scale multiplier configuration ratio (e.g., 0.5 to shrink, 2 to double size):", "1.5");
-    if (!input) return; const s = parseFloat(input) || 1.5;
-    const next = objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * s, y: p.y * s })) } : o);
-    updateHistory(next); setHudFeedback(`Console: Object model geometry scaled by a factor of: ${s}`);
+    const ratioInput = prompt("Enter dimensional scale multiplier configuration multiplier ratio:", "2");
+    if (!ratioInput) return; const r = parseFloat(ratioInput) || 2;
+    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * r, y: p.y * r })) } : o));
   };
 
-  const executeUnion = () => {
-    if (!selectedId) { setHudFeedback("Console: Select a base vector element first."); return; }
-    setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#0ea5e9' } : o));
-    setHudFeedback("Console: Boolean Solid Addition combined successfully.");
-  };
+  const executeUnion = () => { if (selectedId) setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#0ea5e9' } : o)); };
+  const executeSubtract = () => { if (selectedId) setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#ef4444' } : o)); };
+  const executeCopy = () => { const target = objects.find(o => o.id === selectedId); if (target) setClipboard(target); };
+  const executePaste = () => { if (!clipboard) return; const pasted: CADObject = { ...clipboard, id: generateId(), points: clipboard.points.map(p => ({ x: p.x + 20, y: p.y + 20 })) }; updateHistory([...objects, pasted]); setSelectedId(pasted.id); };
+  const executeErase = () => { if (selectedId) { updateHistory(objects.filter(o => o.id !== selectedId)); setSelectedId(null); } };
 
-  const executeSubtract = () => {
-    if (!selectedId) { setHudFeedback("Console: Select overlapping profiles to clear intersection math cutout footprint."); return; }
-    setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#ef4444' } : o));
-    setHudFeedback("Console: Boolean Geometry Solid Subtraction difference compiled.");
-  };
-
-  const executeCopy = () => {
-    const t = objects.find(o => o.id === selectedId);
-    if (t) { setClipboard(t); setHudFeedback("Console: Element profile schema copied to clipboard."); }
-  };
-
-  const executePaste = () => {
-    if (!clipboard) return;
-    const pasted: CADObject = { ...clipboard, id: generateId(), points: clipboard.points.map(p => ({ x: p.x + 30, y: p.y + 30 })) };
-    updateHistory([...objects, pasted]); setSelectedId(pasted.id); setHudFeedback("Console: Pasted duplicated mesh profile into view coordinates.");
-  };
-
-  const executeErase = () => {
-    if (!selectedId) return;
-    updateHistory(objects.filter(o => o.id !== selectedId)); setSelectedId(null); setHudFeedback("Console: Erased targeted item matrix trace element.");
-  };
-
-  // HIGH-PERFORMANCE NATIVE CANVAS EXPORT BLUEPRINT PRINT BUFFER GENERATOR
   const executeExportPDF = () => {
     if (!rendererRef.current) return;
-    setHudFeedback("Console: Compiling drawing elements to standard document matrix...");
-    
     const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
     const printWindow = window.open('', '_blank');
     if (printWindow) {
       printWindow.document.write(`
         <html>
-          <head><title>MiniCAD Pro 3D Vector Blueprint Map</title></head>
-          <body style="margin:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#1e293b; color:#fff; font-family:sans-serif;">
-            <h2>MiniCAD Engine Engineering Vector Map Print Export Blueprint</h2>
-            <img src="${dataUrl}" style="max-width:90%; border:4px solid #fff; box-shadow:0 4px 12px rgba(0,0,0,0.5); background:#000;" />
-            <p>Press <strong>Ctrl + P</strong> or select print to target save device as clear structural vector layout <strong>PDF asset layout</strong> configuration maps.</p>
+          <body style="margin:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:#0f172a; color:#fff; font-family:sans-serif;">
+            <h2>MiniCAD Pro Blueprint Document Map</h2>
+            <img src="${dataUrl}" style="max-width:92%; border:2px solid #fff; background:#000;" />
+            <p>Ready for output formatting. Press <strong>Ctrl + P</strong> to target Save As PDF.</p>
             <script>window.onload = function() { window.print(); }</script>
           </body>
         </html>
       `);
       printWindow.document.close();
-      setHudFeedback("Console: Document generated perfectly! System hardware print matrix prompt activated.");
     }
   };
 
   return {
-    containerRef, objects, selectedId, setSelectedId, currentTool,
-    setCurrentTool: (t: ToolType) => {
-      if (t === 'deselect') { chainAnchorRef.current = null; polylinePointsRef.current = []; setObjects(prev => prev.filter(o => o.id !== 'active_pline')); setCurrentTool('select'); return; }
-      if (t !== 'polyline') { polylinePointsRef.current = []; }
-      setCurrentTool(t);
+    containerRef, objects, selectedId, setSelectedId, currentTool, unit,
+    snapToGrid, setSnapToGrid, orthoMode, setOrthoMode,
+    getSelectedObject: () => objects.find(o => o.id === selectedId),
+    updateSelectedObjectDimensions,
+    setCurrentTool: (tool: ToolType) => {
+      if (tool === 'deselect') { chainAnchorRef.current = null; polylinePointsRef.current = []; setObjects(prev => prev.filter(o => o.id !== 'active_pline')); setCurrentTool('select'); return; }
+      if (tool !== 'polyline') { polylinePointsRef.current = []; }
+      setCurrentTool(tool);
     },
     viewMode, changeView: (mode: ViewMode) => { setViewMode(mode); syncCameraMatrix(); },
     isDarkMode, setIsDarkMode, hudFeedback,
     executeExtrude, executeTrim, executeExtend, executeFillet, executeUnion, executeSubtract, executeErase,
     executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste,
     executeRotate, executeOffset, executePolarArray, executeScale, executeIncreaseWorkspace, executeExportPDF,
-    undo: () => { if (historyIndex > 0) { setHistoryIndex(historyIndex - 1); setObjects(history[historyIndex - 1]); setHudFeedback("Console: Multi-step Undo completed."); } },
-    redo: () => { if (historyIndex < history.length - 1) { setHistoryIndex(historyIndex + 1); setObjects(history[historyIndex + 1]); setHudFeedback("Console: Multi-step Redo completed."); } }
+    undo: () => { if (historyIndex > 0) { setHistoryIndex(historyIndex - 1); setObjects(history[historyIndex - 1]); } },
+    redo: () => { if (historyIndex < history.length - 1) { setHistoryIndex(historyIndex + 1); setObjects(history[historyIndex + 1]); } }
   };
 }
