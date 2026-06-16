@@ -27,7 +27,7 @@ export function useCADEngine() {
   const [currentTool, setCurrentTool] = useState<ToolType>('select');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('Console: Select Units to Begin Workspace Initialization');
+  const [hudFeedback, setHudFeedback] = useState<string>('Console: Workspace Active');
 
   // Dimension Calibration States
   const [unit, setUnit] = useState<string>('mm');
@@ -54,7 +54,6 @@ export function useCADEngine() {
   const cameraZoomRef = useRef<number>(1.2);
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const lastTouchDistanceRef = useRef<number | null>(null);
 
   // Three.js Pipeline Structural Nodes
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
@@ -66,111 +65,7 @@ export function useCADEngine() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // Step 1: Unit Configuration Prompt on Mount with State Safeguards
-  useEffect(() => {
-    const selectedUnit = prompt("Specify primary drawing workspace dimensions unit system (mm, cm, m, foot):", "mm");
-    let u = 'mm';
-    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) {
-      u = selectedUnit.toLowerCase();
-    }
-    
-    setUnit(u);
-    let spacing = 10;
-    let totalSize = 500;
-    if (u === 'cm') { spacing = 5; totalSize = 300; }
-    else if (u === 'm') { spacing = 1; totalSize = 50; }
-    else if (u === 'foot') { spacing = 1; totalSize = 100; }
-    setGridSpacing(spacing);
-    setWorkspaceSize(totalSize);
-    setHudFeedback(`Workspace configured: ${u.toUpperCase()} Mode. Ready.`);
-  }, []);
-
-  // WebGL Renderer Lifecycle Mount Context
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const width = containerRef.current.clientWidth || window.innerWidth;
-    const height = containerRef.current.clientHeight || window.innerHeight;
-
-    // Clean up past instances completely if hot-reloading
-    if (rendererRef.current) {
-      if (containerRef.current.contains(rendererRef.current.domElement)) {
-        containerRef.current.removeChild(rendererRef.current.domElement);
-      }
-      rendererRef.current.dispose();
-    }
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    containerRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
-
-    const scene = sceneRef.current;
-    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
-    cameraRef.current = camera;
-    
-    // Explicit Vector Setup prior to call
-    cameraOffsetRef.current = new THREE.Vector3(0, 0, 0);
-    cameraZoomRef.current = 1.2;
-    syncCameraMatrix();
-
-    // Re-attach core lighting features
-    scene.clear(); 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.75);
-    dl.position.set(150, 350, 150);
-    scene.add(dl);
-
-    // Initial Grid Compilation
-    const divisions = Math.round(workspaceSize / gridSpacing);
-    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
-    scene.add(grid);
-    gridHelperRef.current = grid;
-
-    const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
-    const previewLine = new THREE.Line(new THREE.BufferGeometry(), pMat);
-    previewLine.renderOrder = 999;
-    scene.add(previewLine);
-    previewLineRef.current = previewLine;
-
-    let animId: number;
-    const renderLoop = () => {
-      animId = requestAnimationFrame(renderLoop);
-      if (rendererRef.current && cameraRef.current) {
-        rendererRef.current.render(scene, cameraRef.current);
-      }
-    };
-    renderLoop();
-
-    const host = containerRef.current;
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
-      syncCameraMatrix();
-    };
-    host.addEventListener('wheel', handleWheel, { passive: false });
-
-    return () => {
-      cancelAnimationFrame(animId);
-      if (host) host.removeEventListener('wheel', handleWheel);
-    };
-  }, [workspaceSize, gridSpacing]);
-
   // Synchronize Theme Changes across Grid Networks
-  useEffect(() => {
-    if (gridHelperRef.current && sceneRef.current) {
-      sceneRef.current.remove(gridHelperRef.current);
-      const divisions = Math.round(workspaceSize / gridSpacing);
-      const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
-      sceneRef.current.add(grid);
-      gridHelperRef.current = grid;
-      sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
-    }
-  }, [isDarkMode, workspaceSize, gridSpacing]);
-
-  // View Matrix Refresh Pipeline
   const syncCameraMatrix = () => {
     if (!cameraRef.current) return;
     const offset = cameraOffsetRef.current;
@@ -195,83 +90,6 @@ export function useCADEngine() {
     setHistoryIndex(trimmed.length);
     setObjects(nextState);
   };
-
-  // Engine Graph Mesh Renderer Loop
-  useEffect(() => {
-    if (!sceneRef.current) return;
-    visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
-    visualObjectsRef.current.clear();
-
-    objects.forEach((obj) => {
-      if (!obj || !obj.points) return; // Corrupted save safeguard
-      const isSelected = obj.id === selectedId;
-      const colorHex = isSelected ? 0xef4444 : new THREE.Color(obj.color || '#3b82f6').getHex();
-      const group = new THREE.Group();
-
-      if (obj.is3D && obj.extrusionHeight) {
-        const shape = new THREE.Shape();
-        if (obj.points.length > 1) {
-          shape.moveTo(obj.points[0].x, obj.points[0].y);
-          for (let i = 1; i < obj.points.length; i++) {
-            shape.lineTo(obj.points[i].x, obj.points[i].y);
-          }
-          shape.lineTo(obj.points[0].x, obj.points[0].y);
-
-          const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
-          geo.rotateX(-Math.PI / 2);
-          const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.4, side: THREE.DoubleSide });
-          const mesh = new THREE.Mesh(geo, mat);
-          group.add(mesh);
-        }
-      } else {
-        const vecPoints: THREE.Vector3[] = [];
-        obj.points.forEach((p) => {
-          if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y));
-        });
-        
-        if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
-          vecPoints.push(vecPoints[0].clone());
-        }
-
-        if (vecPoints.length > 0) {
-          const geo = new THREE.BufferGeometry().setFromPoints(vecPoints);
-          const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex, linewidth: 3, depthTest: false }));
-          line.renderOrder = 10;
-          group.add(line);
-        }
-
-        // Spatial Metric Measurement Labels
-        if (isSelected && obj.points.length >= 2) {
-          const p1 = obj.points[0];
-          const p2 = obj.points[obj.points.length - 1];
-          let text = '';
-          
-          if (obj.type === 'circle' && obj.properties?.radius) {
-            text = `R:${obj.properties.radius}${unit}`;
-          } else {
-            text = `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
-          }
-          
-          const canvas = document.createElement('canvas');
-          canvas.width = 160; canvas.height = 64;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace';
-            ctx.fillText(text, 5, 36);
-            const texture = new THREE.CanvasTexture(canvas);
-            const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
-            const sprite = new THREE.Sprite(spriteMat);
-            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2);
-            sprite.scale.set(18, 9, 1);
-            group.add(sprite);
-          }
-        }
-      }
-
-      sceneRef.current.add(group);
-      visualObjectsRef.current.set(obj.id, group);
-    });
-  }, [objects, selectedId, unit]);
 
   // Precision coordinate projection vectors
   const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
@@ -302,6 +120,7 @@ export function useCADEngine() {
     return null;
   };
 
+  // Pointer Interaction Logic Blocks
   const handlePointerDown = (clientX: number, clientY: number, isRightClick = false) => {
     if (isRightClick || currentTool === 'pan') {
       isPanningRef.current = true;
@@ -391,7 +210,7 @@ export function useCADEngine() {
     if (!startPointRef.current || !currentPointRef.current) return;
 
     const origin = startPointRef.current;
-    let end = currentPointRef.current;
+    const end = currentPointRef.current;
 
     const len = Math.round(Math.hypot(end.x - origin.x, end.y - origin.y));
     if (len < 1) return;
@@ -428,6 +247,218 @@ export function useCADEngine() {
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   };
 
+  // Unit Setup Prompt Initialization
+  useEffect(() => {
+    const selectedUnit = prompt("Specify primary drawing workspace dimensions unit system (mm, cm, m, foot):", "mm");
+    let u = 'mm';
+    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) {
+      u = selectedUnit.toLowerCase();
+    }
+    
+    setUnit(u);
+    let spacing = 10;
+    let totalSize = 500;
+    if (u === 'cm') { spacing = 5; totalSize = 300; }
+    else if (u === 'm') { spacing = 1; totalSize = 50; }
+    else if (u === 'foot') { spacing = 1; totalSize = 100; }
+    setGridSpacing(spacing);
+    setWorkspaceSize(totalSize);
+    setHudFeedback(`Workspace configured: ${u.toUpperCase()} Mode. Ready.`);
+  }, []);
+
+  // WebGL Render pipeline mount context with direct browser listener attachment
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const width = containerRef.current.clientWidth || window.innerWidth;
+    const height = containerRef.current.clientHeight || window.innerHeight;
+
+    if (rendererRef.current) {
+      if (containerRef.current.contains(rendererRef.current.domElement)) {
+        containerRef.current.removeChild(rendererRef.current.domElement);
+      }
+      rendererRef.current.dispose();
+    }
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    containerRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    const scene = sceneRef.current;
+    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
+    cameraRef.current = camera;
+    
+    cameraOffsetRef.current = new THREE.Vector3(0, 0, 0);
+    cameraZoomRef.current = 1.2;
+    syncCameraMatrix();
+
+    scene.clear(); 
+    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.75);
+    dl.position.set(150, 350, 150);
+    scene.add(dl);
+
+    const divisions = Math.round(workspaceSize / gridSpacing);
+    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+    scene.add(grid);
+    gridHelperRef.current = grid;
+
+    const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
+    const previewLine = new THREE.Line(new THREE.BufferGeometry(), pMat);
+    previewLine.renderOrder = 999;
+    scene.add(previewLine);
+    previewLineRef.current = previewLine;
+
+    // DIRECT INTERACTION EVENT BINDING TO ELIMINATE TS6133
+    const host = containerRef.current;
+    
+    const onMouseDown = (e: MouseEvent) => {
+      e.preventDefault();
+      handlePointerDown(e.clientX, e.clientY, e.button === 2);
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      handlePointerMove(e.clientX, e.clientY);
+    };
+    const onMouseUp = () => {
+      handlePointerUp();
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        handlePointerDown(e.touches[0].clientX, e.touches[0].clientY, false);
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    };
+
+    host.addEventListener('mousedown', onMouseDown);
+    host.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    host.addEventListener('touchstart', onTouchStart, { passive: true });
+    host.addEventListener('touchmove', onTouchMove, { passive: true });
+    host.addEventListener('touchend', onMouseUp);
+
+    let animId: number;
+    const renderLoop = () => {
+      animId = requestAnimationFrame(renderLoop);
+      if (rendererRef.current && cameraRef.current) {
+        rendererRef.current.render(scene, cameraRef.current);
+      }
+    };
+    renderLoop();
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
+      syncCameraMatrix();
+    };
+    host.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      cancelAnimationFrame(animId);
+      host.removeEventListener('wheel', handleWheel);
+      host.removeEventListener('mousedown', onMouseDown);
+      host.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      host.removeEventListener('touchstart', onTouchStart);
+      host.removeEventListener('touchmove', onTouchMove);
+      host.removeEventListener('touchend', onMouseUp);
+    };
+  }, [workspaceSize, gridSpacing, currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode]);
+
+  useEffect(() => {
+    if (gridHelperRef.current && sceneRef.current) {
+      sceneRef.current.remove(gridHelperRef.current);
+      const divisions = Math.round(workspaceSize / gridSpacing);
+      const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+      sceneRef.current.add(grid);
+      gridHelperRef.current = grid;
+      sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
+    }
+  }, [isDarkMode, workspaceSize, gridSpacing]);
+
+  // Render Pipeline Loop updates
+  useEffect(() => {
+    if (!sceneRef.current) return;
+    visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
+    visualObjectsRef.current.clear();
+
+    objects.forEach((obj) => {
+      if (!obj || !obj.points) return;
+      const isSelected = obj.id === selectedId;
+      const colorHex = isSelected ? 0xef4444 : new THREE.Color(obj.color || '#3b82f6').getHex();
+      const group = new THREE.Group();
+
+      if (obj.is3D && obj.extrusionHeight) {
+        const shape = new THREE.Shape();
+        if (obj.points.length > 1) {
+          shape.moveTo(obj.points[0].x, obj.points[0].y);
+          for (let i = 1; i < obj.points.length; i++) {
+            shape.lineTo(obj.points[i].x, obj.points[i].y);
+          }
+          shape.lineTo(obj.points[0].x, obj.points[0].y);
+
+          const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
+          geo.rotateX(-Math.PI / 2);
+          const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.4, side: THREE.DoubleSide });
+          const mesh = new THREE.Mesh(geo, mat);
+          group.add(mesh);
+        }
+      } else {
+        const vecPoints: THREE.Vector3[] = [];
+        obj.points.forEach((p) => {
+          if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y));
+        });
+        
+        if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
+          vecPoints.push(vecPoints[0].clone());
+        }
+
+        if (vecPoints.length > 0) {
+          const geo = new THREE.BufferGeometry().setFromPoints(vecPoints);
+          const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex, linewidth: 3, depthTest: false }));
+          line.renderOrder = 10;
+          group.add(line);
+        }
+
+        if (isSelected && obj.points.length >= 2) {
+          const p1 = obj.points[0];
+          const p2 = obj.points[obj.points.length - 1];
+          let text = '';
+          
+          if (obj.type === 'circle' && obj.properties?.radius) {
+            text = `R:${obj.properties.radius}${unit}`;
+          } else {
+            text = `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
+          }
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = 160; canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace';
+            ctx.fillText(text, 5, 36);
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2);
+            sprite.scale.set(18, 9, 1);
+            group.add(sprite);
+          }
+        }
+      }
+
+      sceneRef.current.add(group);
+      visualObjectsRef.current.set(obj.id, group);
+    });
+  }, [objects, selectedId, unit]);
+
   const updateSelectedObjectDimensions = (propertyMap: Record<string, number>) => {
     if (!selectedId) return;
     updateHistory(objects.map((obj) => {
@@ -445,7 +476,6 @@ export function useCADEngine() {
   const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Cleared Workspace Grid."); };
   const executeSaveProject = () => { localStorage.setItem('minicad_v3_core', JSON.stringify(objects)); setHudFeedback("Saved layout locally."); };
   
-  // SAFE LOAD PATTERN DETECTOR: Validates and sanitizes old save arrays 
   const executeLoadProject = () => { 
     const save = localStorage.getItem('minicad_v3_core'); 
     if (save) { 
@@ -457,9 +487,9 @@ export function useCADEngine() {
           setHudFeedback("Model reloaded correctly."); 
           return;
         }
-      } catch(e) { /* silent fail fallback reset */ }
+      } catch(e) { /* fallback */ }
     }
-    setHudFeedback("No valid current save track matching current structure found.");
+    setHudFeedback("No valid track found.");
   };
 
   const executeExtrude = () => {
@@ -477,7 +507,6 @@ export function useCADEngine() {
     const input = prompt("Enter Fillet Corner Radius:", "10");
     if (!input) return;
     const filletRad = parseFloat(input) || 10;
-    setHudFeedback(`Applying corner fillet radius: ${filletRad}`);
     const fPts: Point2D[] = [];
     const total = target.points.length;
     for (let i = 0; i < total; i++) {
@@ -487,6 +516,27 @@ export function useCADEngine() {
       fPts.push({ x: current.x + (nextItem.x - current.x) * weight, y: current.y + (nextItem.y - current.y) * weight });
     }
     updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
+  };
+
+  const executePolarArray = () => {
+    if (!selectedId) return;
+    const input = prompt("Enter number of instances for circular replication:", "6");
+    if (!input) return;
+    const count = parseInt(input) || 6;
+    const target = objects.find(o => o.id === selectedId);
+    if (!target) return;
+    
+    const arrayed: CADObject[] = [];
+    for (let i = 1; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const rotatedPoints = target.points.map(p => ({
+        x: p.x * Math.cos(angle) - p.y * Math.sin(angle),
+        y: p.x * Math.sin(angle) + p.y * Math.cos(angle)
+      }));
+      arrayed.push({ ...target, id: generateId(), points: rotatedPoints });
+    }
+    updateHistory([...objects, ...arrayed]);
+    setHudFeedback(`Generated polar matrix array: ${count} entities.`);
   };
 
   const executeTrim = () => { if (selectedId) updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.slice(0, -1) } : o)); };
@@ -511,7 +561,7 @@ export function useCADEngine() {
     viewMode, changeView: (mode: ViewMode) => { setViewMode(mode); syncCameraMatrix(); },
     isDarkMode, setIsDarkMode, hudFeedback,
     executeExtrude, executeTrim, executeExtend, executeFillet, executeUnion, executeSubtract, executeErase,
-    executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste,
+    executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste, executePolarArray,
     executeRotate, executeOffset, executeScale, executeIncreaseWorkspace: () => setWorkspaceSize(prev => prev + 150), executeExportPDF,
     undo: () => { if (historyIndex > 0) { setHistoryIndex(historyIndex - 1); setObjects(history[historyIndex - 1]); } },
     redo: () => { if (historyIndex < history.length - 1) { setHistoryIndex(historyIndex + 1); setObjects(history[historyIndex + 1]); } }
