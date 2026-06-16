@@ -41,7 +41,7 @@ export function useCADEngine() {
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // Protected Gesture Pointer References (Solves the Disappearing Touch Bug)
+  // Protected Gesture Pointer References
   const isDrawingRef = useRef<boolean>(false);
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
@@ -158,7 +158,7 @@ export function useCADEngine() {
     }
   }, [isDarkMode, workspaceSize, gridSpacing]);
 
-  // Zero-Lag Direct Matrix Refresh Pipeline (Eliminates view switching stutter)
+  // Zero-Lag Direct Matrix Refresh Pipeline
   const syncCameraMatrix = () => {
     if (!cameraRef.current) return;
     const offset = cameraOffsetRef.current;
@@ -435,7 +435,7 @@ export function useCADEngine() {
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   };
 
-  // SYSTEM MODIFICATION ENTRYWAYS (Allows adjustments post-creation)
+  // SYSTEM MODIFICATION ENTRYWAYS
   const updateSelectedObjectDimensions = (propertyMap: Record<string, number>) => {
     if (!selectedId) return;
     const next = objects.map((obj) => {
@@ -534,7 +534,7 @@ export function useCADEngine() {
     const target = objects.find(o => o.id === selectedId);
     if (!target || target.points.length < 3) return;
     const radiusInput = prompt("Enter Fillet Corner Radius value:", "10");
-    if (!radiusInput) return; const r = parseFloat(radiusInput) || 10;
+    if (!radiusInput) return; const filletRad = parseFloat(radiusInput) || 10; // Fixed: Unique name prevents TS6133
 
     const fPts: Point2D[] = [];
     const total = target.points.length;
@@ -577,7 +577,6 @@ export function useCADEngine() {
     updateHistory([...objects, ...arrayCopies]);
   };
 
-  // Fixed Naming Variable Mismatch
   const executeScale = () => {
     if (!selectedId) return;
     const ratioInput = prompt("Enter dimensional scale multiplier configuration multiplier ratio:", "2");
