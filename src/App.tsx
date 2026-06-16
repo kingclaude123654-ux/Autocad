@@ -17,7 +17,7 @@ export default function App() {
       flexDirection: 'column', 
       width: '100vw', 
       height: '100vh', 
-      maxHeight: '100vh', // Forces strict hardware screen clamping
+      maxHeight: '100vh', 
       overflow: 'hidden', 
       backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', 
       color: isDarkMode ? '#f1f5f9' : '#0f172a', 
@@ -32,7 +32,7 @@ export default function App() {
         backgroundColor: '#1e293b', 
         borderBottom: '1px solid #334155', 
         gap: '6px',
-        flexShrink: 0 // Prevents header from flattening
+        flexShrink: 0
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Vector Layout [Engine Base: {unit.toUpperCase()}]</div>
@@ -107,12 +107,12 @@ export default function App() {
         flex: 1, 
         position: 'relative', 
         backgroundColor: '#000000', 
-        minHeight: 0, // CRITICAL: Permits flex containment without spilling down
+        minHeight: 0, 
         overflow: 'hidden'
       }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
 
-        {/* CONTROLS INJECTED WITH ABSOLUTE OVERLAY TO FORCE DISPLAY REGARDLESS OF CANVAS SIZING */}
+        {/* CONTROLS INJECTED WITH ABSOLUTE OVERLAY */}
         <div style={{ 
           position: 'absolute', 
           bottom: '8px', 
@@ -126,7 +126,7 @@ export default function App() {
           display: 'flex', 
           flexDirection: 'column', 
           gap: '4px', 
-          zIndex: 999 // Guarantees layer placement on top of WebGL rendering loops
+          zIndex: 999 
         }}>
           
           {/* PRIMITIVES DRAWER BLOCK */}
