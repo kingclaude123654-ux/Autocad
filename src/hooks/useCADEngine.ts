@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { CADObject, Point2D, ToolType, ViewMode } from '../types/cad';
+import { CADObject, ToolType, ViewMode } from '../types/cad';
 
 export function useCADEngine() {
   const containerRef = useRef<HTMLDivElement | null>(null);
