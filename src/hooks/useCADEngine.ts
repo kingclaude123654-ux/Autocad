@@ -184,7 +184,7 @@ export function useCADEngine() {
     setObjects(nextState);
   };
 
-  // Pipeline Render Engine Graph Graphing Layer
+  // Pipeline Render Engine Graph Layer
   useEffect(() => {
     visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
     visualObjectsRef.current.clear();
@@ -529,19 +529,30 @@ export function useCADEngine() {
     updateHistory(next);
   };
 
+  // FIXED: Variable is now explicitly utilized in both telemetry and mathematics
   const executeFillet = () => {
     if (!selectedId) return;
     const target = objects.find(o => o.id === selectedId);
     if (!target || target.points.length < 3) return;
     const radiusInput = prompt("Enter Fillet Corner Radius value:", "10");
-    if (!radiusInput) return; const filletRad = parseFloat(radiusInput) || 10; // Fixed: Unique name prevents TS6133
+    if (!radiusInput) return;
+    
+    const filletRad = parseFloat(radiusInput) || 10; 
+    setHudFeedback(`Applying corner layout rounding adjustment with radius: ${filletRad} ${unit}`);
 
     const fPts: Point2D[] = [];
     const total = target.points.length;
+    
     for (let i = 0; i < total; i++) {
-      const current = target.points[i]; const nextItem = target.points[(i + 1) % total];
+      const current = target.points[i]; 
+      const nextItem = target.points[(i + 1) % total];
+      const weight = Math.min(0.25, filletRad / 100); 
+      
       fPts.push(current);
-      fPts.push({ x: current.x + (nextItem.x - current.x) * 0.15, y: current.y + (nextItem.y - current.y) * 0.15 });
+      fPts.push({ 
+        x: current.x + (nextItem.x - current.x) * weight, 
+        y: current.y + (nextItem.y - current.y) * weight 
+      });
     }
     updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
   };
