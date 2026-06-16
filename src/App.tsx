@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
 // --- TYPES & INTERFACES ---
@@ -34,11 +34,10 @@ export default function App() {
   const [unit, setUnit] = useState<string>('mm');
   const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
-  const [workspaceSize, setWorkspaceSize] = useState<number>(500);
+  const [workspaceSize] = useState<number>(500);
   const [gridSpacing, setGridSpacing] = useState<number>(10);
 
-  // Clipboard & History Stack
-  const [clipboard, setClipboard] = useState<CADObject | null>(null);
+  // History Stack
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
@@ -509,7 +508,7 @@ export default function App() {
     setHudFeedback("Scaled model footprint up 25%.");
   };
 
-  const executeOffset = () => {
+  const executeAreaOffset = () => {
     if (!selectedId) return alert('Select an object first.');
     updateHistory(objects.map(o => {
       if (o.id !== selectedId) return o;
@@ -543,9 +542,9 @@ export default function App() {
         <div className="flex items-center gap-3">
           <span className="text-lg font-black tracking-wider text-indigo-500">ENGINE_CAD v3.0</span>
           <div className="flex gap-1 ml-4 bg-slate-800/40 p-0.5 rounded-md border border-slate-700/50">
-            <button onClick={() => { setUnit('mm'); setGridSpacing(10); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'mm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>MM</button>
-            <button onClick={() => { setUnit('cm'); setGridSpacing(5); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'cm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>CM</button>
-            <button onClick={() => { setUnit('m'); setGridSpacing(1); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>M</button>
+            <button onClick={() => { setUnit('mm'); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'mm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>MM</button>
+            <button onClick={() => { setUnit('cm'); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'cm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>CM</button>
+            <button onClick={() => { setUnit('m'); }} className={`px-2 py-1 text-xs font-bold rounded ${unit === 'm' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>M</button>
           </div>
         </div>
 
@@ -609,7 +608,7 @@ export default function App() {
             <button onClick={executeFillet} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700">⌒ Corner Fillet</button>
             <button onClick={executeRotate} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700">⟳ Rotate 15°</button>
             <button onClick={executeScale} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700">⚖ Scale Geometry</button>
-            <button onClick={executeOffset} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700">☵ Offset Outline</button>
+            <button onClick={executeAreaOffset} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700">☵ Offset Outline</button>
             <button onClick={executeErase} className="py-1.5 px-2 text-left rounded text-xs font-semibold bg-rose-950/60 text-rose-400 border border-rose-900/50 hover:bg-rose-900/50 mt-2">🗑 Delete Selection</button>
           </div>
 
@@ -638,7 +637,7 @@ export default function App() {
         <main ref={containerRef} className="flex-1 w-full h-full cursor-crosshair relative bg-transparent" />
 
         {/* BOTTOM FLOATING TECHNICAL HUD DATA TERMINAL */}
-        <footer className={`absolute bottom-3 left-68 right-4 px-4 py-2.5 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl ${
+        <footer className={`absolute bottom-3 left-64 right-4 px-4 py-2.5 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl ${
           isDarkMode ? 'bg-slate-950/90 border-slate-800 text-emerald-400' : 'bg-white/90 border-slate-200 text-emerald-700'
         }`}>
           <div className="flex items-center gap-2 font-mono text-xs">
