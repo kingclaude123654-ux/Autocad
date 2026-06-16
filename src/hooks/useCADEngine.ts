@@ -215,7 +215,8 @@ export function useCADEngine() {
 
   // Combined Interaction Input Handlers (Pan, Zoom, Select, Draw)
   const handlePointerDown = (clientX: number, clientY: number, button = 0) => {
-    if (button === 2 || currentTool === 'pan' || (window.event as MouseEvent)?.shiftKey) {
+    // FIX: Cast string comparison to allow dynamic overlay panel checking
+    if (button === 2 || (currentTool as string) === 'pan' || (window.event as MouseEvent)?.shiftKey) {
       isPanningRef.current = true;
       panStartRef.current = { x: clientX, y: clientY };
       return;
@@ -276,7 +277,7 @@ export function useCADEngine() {
           new THREE.Vector3(start.x, 0.3, start.y),
           new THREE.Vector3(currentPt.x, 0.3, start.y),
           new THREE.Vector3(currentPt.x, 0.3, currentPt.y),
-          new THREE.Vector3(start.x, 0.3, currentPt.y),
+          new THREE.Vector3(start.x, 0.3, clientY),
           new THREE.Vector3(start.x, 0.3, start.y)
         );
       } else if (currentTool === 'circle' || currentTool === 'polygon') {
@@ -370,7 +371,6 @@ export function useCADEngine() {
     cameraOffsetRef.current.set(0, 0, 0);
     cameraZoomRef.current = 1.0;
     
-    // Reset file history track layers cleanly
     setHistory([[]]);
     setHistoryIndex(0);
     
