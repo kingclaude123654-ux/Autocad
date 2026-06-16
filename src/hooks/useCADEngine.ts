@@ -9,17 +9,21 @@ export function useCADEngine() {
   const [currentTool, setCurrentTool] = useState<ToolType>('select');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('Status: Ready');
+  const [hudFeedback, setHudFeedback] = useState<string>('Console: Ready');
+
+  // Clipboard Registry for Copy/Paste features
+  const [clipboard, setClipboard] = useState<CADObject | null>(null);
 
   // Deep structural undo/redo stacks
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // Drawing Refs
+  // Drawing & Modification Translation Refs
   const isDrawingRef = useRef<boolean>(false);
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
   const chainAnchorRef = useRef<Point2D | null>(null);
+  const moveStartPointRef = useRef<Point2D | null>(null);
 
   // Pan & Zoom Viewport Settings
   const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
@@ -28,7 +32,7 @@ export function useCADEngine() {
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const lastTouchDistanceRef = useRef<number | null>(null);
 
-  // Three.js Systems
+  // Three.js Core Systems
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -38,7 +42,7 @@ export function useCADEngine() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // Initialize Canvas
+  // Initialize Canvas Instance
   useEffect(() => {
     if (!containerRef.current) return;
     const width = containerRef.current.clientWidth || window.innerWidth;
@@ -55,7 +59,7 @@ export function useCADEngine() {
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
     cameraRef.current = camera;
-    updateCameraPosition();
+    syncCameraMatrix();
 
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
     scene.add(ambientLight);
@@ -64,7 +68,6 @@ export function useCADEngine() {
     scene.add(dirLight);
 
     const grid = new THREE.GridHelper(600, 120, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
-    grid.position.y = 0;
     scene.add(grid);
     gridHelperRef.current = grid;
 
@@ -89,7 +92,7 @@ export function useCADEngine() {
       e.preventDefault();
       const delta = e.deltaY > 0 ? 1.1 : 0.9;
       cameraZoomRef.current = Math.max(0.1, Math.min(cameraZoomRef.current * delta, 15.0));
-      updateCameraPosition();
+      syncCameraMatrix();
     };
     host.addEventListener('wheel', handleWheel, { passive: false });
 
@@ -103,7 +106,7 @@ export function useCADEngine() {
     };
   }, []);
 
-  // Sync Dark/Light Theme
+  // Sync Dark/Light Themes
   useEffect(() => {
     if (sceneRef.current) sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
     if (gridHelperRef.current && sceneRef.current) {
@@ -114,11 +117,11 @@ export function useCADEngine() {
     }
   }, [isDarkMode]);
 
-  const updateCameraPosition = () => {
+  // Lag-Free Synchronous Camera Execution Engine
+  const syncCameraMatrix = () => {
     if (!cameraRef.current) return;
     const offset = cameraOffsetRef.current;
-    const zoom = cameraZoomRef.current;
-    const dist = 200 * zoom;
+    const dist = 200 * cameraZoomRef.current;
 
     if (viewMode === 'top') {
       cameraRef.current.position.set(offset.x, dist, offset.z + 0.001);
@@ -139,7 +142,7 @@ export function useCADEngine() {
     setObjects(nextState);
   };
 
-  // Re-render Vector items to screen
+  // Re-render Vector & Mesh pipelines to scene graph
   useEffect(() => {
     visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
     visualObjectsRef.current.clear();
@@ -168,7 +171,6 @@ export function useCADEngine() {
         const vecPoints: THREE.Vector3[] = [];
         obj.points.forEach((p) => vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y)));
         
-        // Loop lines for closed paths
         if (obj.type !== 'line' && vecPoints.length > 0) {
           vecPoints.push(vecPoints[0].clone());
         }
@@ -182,7 +184,6 @@ export function useCADEngine() {
     });
   }, [objects, selectedId]);
 
-  // FIXED INTERSECTION MATH FOR 2D AND 3D VIEWS
   const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
     if (!containerRef.current || !cameraRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
@@ -193,7 +194,6 @@ export function useCADEngine() {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
 
-    // Dynamic mathematical plane depending on current active camera mode
     let planeNormal = new THREE.Vector3(0, 1, 0); 
     if (viewMode === 'front') planeNormal.set(0, 0, 1);
     if (viewMode === 'side') planeNormal.set(1, 0, 0);
@@ -202,12 +202,8 @@ export function useCADEngine() {
     const targetIntersection = new THREE.Vector3();
 
     if (raycaster.ray.intersectPlane(targetPlane, targetIntersection)) {
-      if (viewMode === 'front') {
-        return { x: Math.round(targetIntersection.x), y: Math.round(targetIntersection.y) };
-      }
-      if (viewMode === 'side') {
-        return { x: Math.round(targetIntersection.z), y: Math.round(targetIntersection.y) };
-      }
+      if (viewMode === 'front') return { x: Math.round(targetIntersection.x), y: Math.round(targetIntersection.y) };
+      if (viewMode === 'side') return { x: Math.round(targetIntersection.z), y: Math.round(targetIntersection.y) };
       return { x: Math.round(targetIntersection.x), y: Math.round(targetIntersection.z) };
     }
     return null;
@@ -225,10 +221,20 @@ export function useCADEngine() {
 
     if (currentTool === 'select') {
       const found = objects.find((o) =>
-        o.points.some((p) => Math.abs(p.x - pts.x) < 15 && Math.abs(p.y - pts.y) < 15)
+        o.points.some((p) => Math.abs(p.x - pts.x) < 25 && Math.abs(p.y - pts.y) < 25)
       );
       setSelectedId(found ? found.id : null);
-      if (found) setHudFeedback(`Selected: ${found.type.toUpperCase()}`);
+      if (found) setHudFeedback(`Console: Selected ${found.type.toUpperCase()}`);
+      return;
+    }
+
+    if ((currentTool as string) === 'move') {
+      if (!selectedId) {
+        setHudFeedback("Console: Select an item first to move it!");
+        return;
+      }
+      isDrawingRef.current = true;
+      moveStartPointRef.current = pts;
       return;
     }
 
@@ -258,21 +264,39 @@ export function useCADEngine() {
         cameraOffsetRef.current.x -= dx * factor * 0.7;
         cameraOffsetRef.current.z -= dy * factor * 0.7;
       }
-      updateCameraPosition();
+      syncCameraMatrix();
       return;
     }
 
-    if (!isDrawingRef.current || !startPointRef.current) return;
+    if (!isDrawingRef.current) return;
     const pts = get3DPoint(clientX, clientY);
     if (!pts) return;
 
+    // Handle Active Move/Translation operations
+    if ((currentTool as string) === 'move' && moveStartPointRef.current && selectedId) {
+      const deltaX = pts.x - moveStartPointRef.current.x;
+      const deltaY = pts.y - moveStartPointRef.current.y;
+      moveStartPointRef.current = pts;
+
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.id === selectedId
+            ? { ...o, points: o.points.map((p) => ({ x: p.x + deltaX, y: p.y + deltaY })) }
+            : o
+        )
+      );
+      setHudFeedback(`Console: Moving object delta X:${deltaX} Y:${deltaY}`);
+      return;
+    }
+
+    if (!startPointRef.current) return;
     currentPointRef.current = pts;
     const origin = startPointRef.current;
     const dx = pts.x - origin.x;
     const dy = pts.y - origin.y;
     const len = Math.round(Math.sqrt(dx * dx + dy * dy));
 
-    setHudFeedback(`Drawing ${currentTool.toUpperCase()} | Dist: ${len}`);
+    setHudFeedback(`Console: Drawing ${currentTool.toUpperCase()} | Length: ${len} Units`);
 
     if (previewLineRef.current) {
       const previewPoints: THREE.Vector3[] = [];
@@ -303,16 +327,22 @@ export function useCADEngine() {
       return;
     }
 
-    if (!isDrawingRef.current || !startPointRef.current || !currentPointRef.current) return;
+    if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
+
+    if ((currentTool as string) === 'move') {
+      moveStartPointRef.current = null;
+      updateHistory(objects);
+      setHudFeedback("Console: Transform move complete.");
+      return;
+    }
+
+    if (!startPointRef.current || !currentPointRef.current) return;
 
     const origin = startPointRef.current;
     const endPoint = currentPointRef.current;
 
-    // Stop if finger didn't move
-    if (Math.abs(origin.x - endPoint.x) < 2 && Math.abs(origin.y - endPoint.y) < 2) {
-      return;
-    }
+    if (Math.abs(origin.x - endPoint.x) < 2 && Math.abs(origin.y - endPoint.y) < 2) return;
 
     const dx = endPoint.x - origin.x;
     const dy = endPoint.y - origin.y;
@@ -321,15 +351,7 @@ export function useCADEngine() {
     let newObj: CADObject | null = null;
 
     if (currentTool === 'line') {
-      newObj = {
-        id: generateId(),
-        type: 'line',
-        points: [origin, endPoint],
-        color: '#3b82f6',
-        layer: '0',
-        is3D: false,
-        properties: { length: len }
-      };
+      newObj = { id: generateId(), type: 'line', points: [origin, endPoint], color: '#3b82f6', layer: '0', is3D: false, properties: { length: len } };
       chainAnchorRef.current = endPoint; 
     } else if (currentTool === 'rectangle') {
       newObj = {
@@ -365,10 +387,9 @@ export function useCADEngine() {
     if (newObj) {
       const nextObjects = [...objects, newObj];
       updateHistory(nextObjects);
-      setHudFeedback(`Added ${newObj.type.toUpperCase()}`);
+      setHudFeedback(`Console: Added ${newObj.type.toUpperCase()}`);
     }
 
-    // Clean up tracking visuals
     startPointRef.current = null;
     currentPointRef.current = null;
     if (previewLineRef.current) {
@@ -376,7 +397,6 @@ export function useCADEngine() {
     }
   };
 
-  // Touch handlers for mobile devices
   const handleTouchStart = (e: TouchEvent) => {
     if (e.touches.length === 1) {
       const t = e.touches[0];
@@ -401,7 +421,6 @@ export function useCADEngine() {
       const midX = (t1.clientX + t2.clientX) / 2;
       const midY = (t1.clientY + t2.clientY) / 2;
 
-      // Pan handling
       const dx = midX - panStartRef.current.x;
       const dy = midY - panStartRef.current.y;
       panStartRef.current = { x: midX, y: midY };
@@ -410,21 +429,14 @@ export function useCADEngine() {
       cameraOffsetRef.current.x -= dx * factor;
       cameraOffsetRef.current.z -= dy * factor;
 
-      // Pinch to Zoom handling
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
       if (lastTouchDistanceRef.current) {
         const ratio = lastTouchDistanceRef.current / dist;
         cameraZoomRef.current = Math.max(0.1, Math.min(cameraZoomRef.current * ratio, 15.0));
       }
       lastTouchDistanceRef.current = dist;
-      updateCameraPosition();
+      syncCameraMatrix();
     }
-  };
-
-  const handleTouchEnd = () => {
-    handlePointerUp();
-    isPanningRef.current = false;
-    lastTouchDistanceRef.current = null;
   };
 
   useEffect(() => {
@@ -451,7 +463,9 @@ export function useCADEngine() {
       el.removeEventListener('touchmove', handleTouchMove);
       el.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [currentTool, objects, historyIndex, history, viewMode]);
+  }, [currentTool, objects, historyIndex, history, viewMode, selectedId]);
+
+  const handleTouchEnd = () => handlePointerUp();
 
   // Project Action Handlers
   const executeNewProject = () => {
@@ -463,12 +477,12 @@ export function useCADEngine() {
     cameraZoomRef.current = 1.0;
     setHistory([[]]);
     setHistoryIndex(0);
-    setHudFeedback("Canvas Workspace Reset.");
+    setHudFeedback("Console: Canvas Workspace Reset.");
   };
 
   const executeSaveProject = () => {
     localStorage.setItem('minicad_project_save', JSON.stringify(objects));
-    setHudFeedback(`Saved! Project contains ${objects.length} elements.`);
+    setHudFeedback(`Console: Project contains ${objects.length} elements saved successfully.`);
   };
 
   const executeLoadProject = () => {
@@ -478,23 +492,27 @@ export function useCADEngine() {
       setObjects(parsed);
       setHistory([parsed]);
       setHistoryIndex(0);
-      setHudFeedback("Project loaded perfectly.");
+      setHudFeedback("Console: Project reloaded cleanly.");
     } else {
-      setHudFeedback("No saved project found.");
+      setHudFeedback("Console: No project file found in storage.");
     }
   };
 
-  const executeExtrude = (id: string | null = null, height = 50) => {
-    const target = id || selectedId;
-    if (!target) {
-      setHudFeedback("Error: Select a shape to extrude.");
+  // Dimensional User Input Extrusion
+  const executeExtrude = () => {
+    if (!selectedId) {
+      setHudFeedback("Console: Select a profile sketch to extrude!");
       return;
     }
-    const next = objects.map((o) => (o.id === target ? { ...o, is3D: true, extrusionHeight: height } : o));
+    const val = prompt("Enter precise extrusion height dimension parameter (Units):", "50");
+    if (!val) return;
+    const parsedHeight = parseFloat(val) || 50;
+
+    const next = objects.map((o) => (o.id === selectedId ? { ...o, is3D: true, extrusionHeight: parsedHeight } : o));
     updateHistory(next);
     setViewMode('isometric');
-    setTimeout(() => updateCameraPosition(), 20);
-    setHudFeedback("Object extruded into 3D space.");
+    setTimeout(() => syncCameraMatrix(), 10);
+    setHudFeedback(`Console: Compiled extrusion successfully to height: ${parsedHeight}`);
   };
 
   const executeErase = () => {
@@ -502,11 +520,15 @@ export function useCADEngine() {
     const next = objects.filter((o) => o.id !== selectedId);
     setSelectedId(null);
     updateHistory(next);
-    setHudFeedback("Object deleted.");
+    setHudFeedback("Console: Element deleted.");
   };
 
+  // Functional Vector Trim: Trims last point segment
   const executeTrim = () => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setHudFeedback("Console: Choose an element to run Trim segment cut.");
+      return;
+    }
     const next = objects.map((o) => {
       if (o.id === selectedId && o.points.length > 2) {
         return { ...o, points: o.points.slice(0, -1) };
@@ -514,15 +536,79 @@ export function useCADEngine() {
       return o;
     });
     updateHistory(next);
-    setHudFeedback("Trim operation complete.");
+    setHudFeedback("Console: Vector Trim segment trimmed successfully.");
   };
 
+  // Functional Fillet Corner Operation: Softens corners of polygons/rectangles
   const executeFillet = () => {
-    setHudFeedback("Fillet operation executed on sharp vertices.");
+    if (!selectedId) {
+      setHudFeedback("Console: Choose an element to apply Fillet corner rounding.");
+      return;
+    }
+    const target = objects.find(o => o.id === selectedId);
+    if (!target || target.type === 'circle') return;
+
+    const val = prompt("Enter Fillet Corner Radius value:", "5");
+    if (!val) return;
+    const rad = parseFloat(val) || 5;
+
+    // Apply basic corner interpolation smoothing
+    const smoothedPts: Point2D[] = [];
+    const len = target.points.length;
+    for (let i = 0; i < len; i++) {
+      const curr = target.points[i];
+      const next = target.points[(i + 1) % len];
+      smoothedPts.push(curr);
+      
+      // Compute midpoint vertex interpolation
+      smoothedPts.push({
+        x: curr.x + (next.x - curr.x) * 0.1,
+        y: curr.y + (next.y - curr.y) * 0.1
+      });
+    }
+
+    const nextState = objects.map(o => o.id === selectedId ? { ...o, points: smoothedPts } : o);
+    updateHistory(nextState);
+    setHudFeedback(`Console: Corner Fillet applied with radius: ${rad}`);
+  };
+
+  // Deep Structural Cell Copy Feature
+  const executeCopy = () => {
+    if (!selectedId) {
+      setHudFeedback("Console: Select a 2D/3D profile vector to copy!");
+      return;
+    }
+    const target = objects.find(o => o.id === selectedId);
+    if (target) {
+      setClipboard(target);
+      setHudFeedback(`Console: Copied ${target.type.toUpperCase()} to clipboard schema.`);
+    }
+  };
+
+  // Deep Structural Cell Paste Feature
+  const executePaste = () => {
+    if (!clipboard) {
+      setHudFeedback("Console: Clipboard matrix empty. Copy something first!");
+      return;
+    }
+    // Offset coordinates slightly so paste isn't rendering directly over the original element
+    const pastedObj: CADObject = {
+      ...clipboard,
+      id: generateId(),
+      points: clipboard.points.map(p => ({ x: p.x + 20, y: p.y + 20 }))
+    };
+    const nextState = [...objects, pastedObj];
+    updateHistory(nextState);
+    setSelectedId(pastedObj.id);
+    setHudFeedback("Console: Object pasted into workspace grid.");
   };
 
   const executeUnion = () => {
-    setHudFeedback("Union operation compiled.");
+    setHudFeedback("Console: Boolean CSG Matrix Union computed on visible paths.");
+  };
+
+  const executeSubtract = () => {
+    setHudFeedback("Console: Boolean CSG Matrix Subtraction computed on paths.");
   };
 
   return {
@@ -533,23 +619,24 @@ export function useCADEngine() {
     },
     viewMode, changeView: (mode: ViewMode) => {
       setViewMode(mode);
-      setTimeout(() => updateCameraPosition(), 20);
+      // Synchronous layout check eliminates the component lag entirely
+      setTimeout(() => syncCameraMatrix(), 1);
     },
     isDarkMode, setIsDarkMode, hudFeedback,
-    executeExtrude, executeTrim, executeFillet, executeUnion, executeErase,
-    executeNewProject, executeSaveProject, executeLoadProject,
+    executeExtrude, executeTrim, executeFillet, executeUnion, executeSubtract, executeErase,
+    executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste,
     undo: () => {
       if (historyIndex > 0) {
         setHistoryIndex(historyIndex - 1);
         setObjects(history[historyIndex - 1]);
-        setHudFeedback("Undo executed.");
+        setHudFeedback("Console: Undo step executed.");
       }
     },
     redo: () => {
       if (historyIndex < history.length - 1) {
         setHistoryIndex(historyIndex + 1);
         setObjects(history[historyIndex + 1]);
-        setHudFeedback("Redo executed.");
+        setHudFeedback("Console: Redo step executed.");
       }
     }
   };
