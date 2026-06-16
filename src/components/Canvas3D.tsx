@@ -8,7 +8,7 @@ interface Canvas3DProps {
 export const Canvas3D: React.FC<Canvas3DProps> = ({ containerRef, onCanvasClick }) => {
   return (
     <div 
-      ref={containerRef} 
+      ref={containerRef as unknown as React.LegacyRef<HTMLDivElement>} 
       onClick={onCanvasClick}
       className="flex-1 w-full h-full relative cursor-crosshair overflow-hidden touch-none select-none"
     />
