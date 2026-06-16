@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sliders, Settings2, Code, ShieldCheck } from 'lucide-react';
+import { Sliders, Settings2, ShieldCheck } from 'lucide-react';
 import { CADObject } from '../types/cad';
 
 interface RightPanelProps {
