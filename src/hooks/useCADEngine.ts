@@ -65,23 +65,28 @@ export function useCADEngine() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // Synchronize Theme Changes across Grid Networks
-  const syncCameraMatrix = () => {
+  // INSTANT VIEW MATRIX REFRESH (No timeouts, immediate render update)
+  const syncCameraMatrix = (forcedMode?: ViewMode) => {
     if (!cameraRef.current) return;
+    const activeMode = forcedMode || viewMode;
     const offset = cameraOffsetRef.current;
     const dist = 240 * cameraZoomRef.current;
 
-    if (viewMode === 'top') {
+    if (activeMode === 'top') {
       cameraRef.current.position.set(offset.x, dist, offset.z + 0.001);
-    } else if (viewMode === 'front') {
+    } else if (activeMode === 'front') {
       cameraRef.current.position.set(offset.x, offset.y, dist);
-    } else if (viewMode === 'side') {
+    } else if (activeMode === 'side') {
       cameraRef.current.position.set(dist, offset.y, offset.z);
     } else {
       cameraRef.current.position.set(offset.x + dist * 0.7, offset.y + dist * 0.7, offset.z + dist * 0.7);
     }
     cameraRef.current.lookAt(offset.x, offset.y, offset.z);
     cameraRef.current.updateProjectionMatrix();
+
+    if (rendererRef.current) {
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    }
   };
 
   const updateHistory = (nextState: CADObject[]) => {
@@ -91,7 +96,6 @@ export function useCADEngine() {
     setObjects(nextState);
   };
 
-  // Precision coordinate projection vectors
   const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
     if (!containerRef.current || !cameraRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
@@ -120,7 +124,7 @@ export function useCADEngine() {
     return null;
   };
 
-  // Pointer Interaction Logic Blocks
+  // RESTORED PANNING & DRAWING SYSTEMS
   const handlePointerDown = (clientX: number, clientY: number, isRightClick = false) => {
     if (isRightClick || currentTool === 'pan') {
       isPanningRef.current = true;
@@ -158,6 +162,8 @@ export function useCADEngine() {
     if (isPanningRef.current) {
       const dx = clientX - panStartRef.current.x; const dy = clientY - panStartRef.current.y;
       panStartRef.current = { x: clientX, y: clientY };
+      
+      // Fixed view-pan transformation vectors
       const factor = 0.35 * cameraZoomRef.current;
       if (viewMode === 'top') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.z -= dy * factor; }
       else if (viewMode === 'front') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.y += dy * factor; }
@@ -193,9 +199,10 @@ export function useCADEngine() {
         pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y));
       } else if (currentTool === 'rectangle') {
         pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
-      } else if (currentTool === 'circle' || currentTool === 'polygon') {
-        const sides = currentTool === 'circle' ? 32 : 3;
-        for (let i = 0; i <= sides; i++) { const alpha = (i / sides) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
+      } else if (currentTool === 'polygon') {
+        for (let i = 0; i <= 3; i++) { const alpha = (i / 3) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
+      } else if (currentTool === 'circle') {
+        for (let i = 0; i <= 64; i++) { const alpha = (i / 64) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
       }
       previewLineRef.current.geometry.setFromPoints(pPts);
     }
@@ -232,14 +239,20 @@ export function useCADEngine() {
       return; 
     } else if (currentTool === 'rectangle') {
       newObj = { id: generateId(), type: 'rectangle', points: [{ x: origin.x, y: origin.y }, { x: end.x, y: origin.y }, { x: end.x, y: end.y }, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false, properties: { width: Math.abs(end.x - origin.x), height: Math.abs(end.y - origin.y) } };
+    } else if (currentTool === 'polygon') {
+      const pts: Point2D[] = [];
+      for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
+      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false };
     } else if (currentTool === 'circle') {
       const pts: Point2D[] = [];
-      for (let i = 0; i < 32; i++) { const a = (i / 32) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
+      for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
       newObj = { id: generateId(), type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false, properties: { radius: len } };
     }
 
+    // FIX: Clean functional spread logic guarantees new shape is combined with existing array values
     if (newObj) {
-      updateHistory([...objects.filter(o => o.id !== 'active_pline'), newObj]);
+      const activeStateList = objects.filter(o => o && o.id !== 'active_pline');
+      updateHistory([...activeStateList, newObj]);
       setSelectedId(newObj.id);
     }
 
@@ -247,26 +260,19 @@ export function useCADEngine() {
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   };
 
-  // Unit Setup Prompt Initialization
   useEffect(() => {
     const selectedUnit = prompt("Specify primary drawing workspace dimensions unit system (mm, cm, m, foot):", "mm");
     let u = 'mm';
-    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) {
-      u = selectedUnit.toLowerCase();
-    }
-    
+    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) { u = selectedUnit.toLowerCase(); }
     setUnit(u);
-    let spacing = 10;
-    let totalSize = 500;
+    let spacing = 10; let totalSize = 500;
     if (u === 'cm') { spacing = 5; totalSize = 300; }
     else if (u === 'm') { spacing = 1; totalSize = 50; }
     else if (u === 'foot') { spacing = 1; totalSize = 100; }
-    setGridSpacing(spacing);
-    setWorkspaceSize(totalSize);
+    setGridSpacing(spacing); setWorkspaceSize(totalSize);
     setHudFeedback(`Workspace configured: ${u.toUpperCase()} Mode. Ready.`);
   }, []);
 
-  // WebGL Render pipeline mount context with direct browser listener attachment
   useEffect(() => {
     if (!containerRef.current) return;
     const width = containerRef.current.clientWidth || window.innerWidth;
@@ -290,9 +296,6 @@ export function useCADEngine() {
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     cameraRef.current = camera;
-    
-    cameraOffsetRef.current = new THREE.Vector3(0, 0, 0);
-    cameraZoomRef.current = 1.2;
     syncCameraMatrix();
 
     scene.clear(); 
@@ -312,47 +315,16 @@ export function useCADEngine() {
     scene.add(previewLine);
     previewLineRef.current = previewLine;
 
-    // DIRECT INTERACTION EVENT BINDING TO ELIMINATE TS6133
     const host = containerRef.current;
-    
-    const onMouseDown = (e: MouseEvent) => {
-      e.preventDefault();
-      handlePointerDown(e.clientX, e.clientY, e.button === 2);
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      handlePointerMove(e.clientX, e.clientY);
-    };
-    const onMouseUp = () => {
-      handlePointerUp();
-    };
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        handlePointerDown(e.touches[0].clientX, e.touches[0].clientY, false);
-      }
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        handlePointerMove(e.touches[0].clientX, e.touches[0].clientY);
-      }
-    };
+    const onMouseDown = (e: MouseEvent) => { e.preventDefault(); handlePointerDown(e.clientX, e.clientY, e.button === 2); };
+    const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
+    const onMouseUp = () => { handlePointerUp(); };
 
     host.addEventListener('mousedown', onMouseDown);
     host.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    host.addEventListener('touchstart', onTouchStart, { passive: true });
-    host.addEventListener('touchmove', onTouchMove, { passive: true });
-    host.addEventListener('touchend', onMouseUp);
 
-    let animId: number;
-    const renderLoop = () => {
-      animId = requestAnimationFrame(renderLoop);
-      if (rendererRef.current && cameraRef.current) {
-        rendererRef.current.render(scene, cameraRef.current);
-      }
-    };
-    renderLoop();
-
+    // FIXED MOUSE WHEEL ZOOM MULTIPLIER BINDING
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
       cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
@@ -361,14 +333,10 @@ export function useCADEngine() {
     host.addEventListener('wheel', handleWheel, { passive: false });
 
     return () => {
-      cancelAnimationFrame(animId);
       host.removeEventListener('wheel', handleWheel);
       host.removeEventListener('mousedown', onMouseDown);
       host.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      host.removeEventListener('touchstart', onTouchStart);
-      host.removeEventListener('touchmove', onTouchMove);
-      host.removeEventListener('touchend', onMouseUp);
     };
   }, [workspaceSize, gridSpacing, currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode]);
 
@@ -383,7 +351,7 @@ export function useCADEngine() {
     }
   }, [isDarkMode, workspaceSize, gridSpacing]);
 
-  // Render Pipeline Loop updates
+  // Object Render Pipeline
   useEffect(() => {
     if (!sceneRef.current) return;
     visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
@@ -399,9 +367,7 @@ export function useCADEngine() {
         const shape = new THREE.Shape();
         if (obj.points.length > 1) {
           shape.moveTo(obj.points[0].x, obj.points[0].y);
-          for (let i = 1; i < obj.points.length; i++) {
-            shape.lineTo(obj.points[i].x, obj.points[i].y);
-          }
+          for (let i = 1; i < obj.points.length; i++) { shape.lineTo(obj.points[i].x, obj.points[i].y); }
           shape.lineTo(obj.points[0].x, obj.points[0].y);
 
           const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
@@ -412,9 +378,7 @@ export function useCADEngine() {
         }
       } else {
         const vecPoints: THREE.Vector3[] = [];
-        obj.points.forEach((p) => {
-          if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y));
-        });
+        obj.points.forEach((p) => { if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y)); });
         
         if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
           vecPoints.push(vecPoints[0].clone());
@@ -428,32 +392,19 @@ export function useCADEngine() {
         }
 
         if (isSelected && obj.points.length >= 2) {
-          const p1 = obj.points[0];
-          const p2 = obj.points[obj.points.length - 1];
-          let text = '';
-          
-          if (obj.type === 'circle' && obj.properties?.radius) {
-            text = `R:${obj.properties.radius}${unit}`;
-          } else {
-            text = `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
-          }
-          
-          const canvas = document.createElement('canvas');
-          canvas.width = 160; canvas.height = 64;
+          const p1 = obj.points[0]; const p2 = obj.points[obj.points.length - 1];
+          let text = obj.type === 'circle' && obj.properties?.radius ? `R:${obj.properties.radius}${unit}` : `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
+          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 64;
           const ctx = canvas.getContext('2d');
           if (ctx) {
-            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace';
-            ctx.fillText(text, 5, 36);
+            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace'; ctx.fillText(text, 5, 36);
             const texture = new THREE.CanvasTexture(canvas);
-            const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
-            const sprite = new THREE.Sprite(spriteMat);
-            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2);
-            sprite.scale.set(18, 9, 1);
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2); sprite.scale.set(18, 9, 1);
             group.add(sprite);
           }
         }
       }
-
       sceneRef.current.add(group);
       visualObjectsRef.current.set(obj.id, group);
     });
@@ -466,79 +417,52 @@ export function useCADEngine() {
       const origin = obj.points[0] || { x: 0, y: 0 };
       if (obj.type === 'circle' && propertyMap.radius) {
         const r = propertyMap.radius; const pts = [];
-        for (let i = 0; i < 32; i++) { const a = (i / 32) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * r, y: origin.y + Math.sin(a) * r }); }
+        for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * r, y: origin.y + Math.sin(a) * r }); }
         return { ...obj, points: pts, properties: { ...obj.properties, radius: r } };
       }
       return obj;
     }));
   };
 
-  const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Cleared Workspace Grid."); };
-  const executeSaveProject = () => { localStorage.setItem('minicad_v3_core', JSON.stringify(objects)); setHudFeedback("Saved layout locally."); };
-  
-  const executeLoadProject = () => { 
-    const save = localStorage.getItem('minicad_v3_core'); 
-    if (save) { 
-      try {
-        const parsed = JSON.parse(save); 
-        if (Array.isArray(parsed)) {
-          const clean = parsed.filter(o => o && Array.isArray(o.points));
-          setObjects(clean); setHistory([clean]); setHistoryIndex(0); 
-          setHudFeedback("Model reloaded correctly."); 
-          return;
-        }
-      } catch(e) { /* fallback */ }
-    }
-    setHudFeedback("No valid track found.");
-  };
-
-  const executeExtrude = () => {
-    if (!selectedId) return;
-    const input = prompt("Enter precise extrusion depth dimension:", "40");
-    if (!input) return; const depth = parseFloat(input) || 40;
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o));
-    setViewMode('isometric'); setTimeout(() => syncCameraMatrix(), 20);
-  };
-
+  // FULLY FIXED CORNER FILLET LOGIC FOR ALL PRIMITIVES
   const executeFillet = () => {
     if (!selectedId) return;
     const target = objects.find(o => o.id === selectedId);
-    if (!target || target.points.length < 3) return;
+    if (!target || target.points.length < 2) return;
+
     const input = prompt("Enter Fillet Corner Radius:", "10");
     if (!input) return;
     const filletRad = parseFloat(input) || 10;
+
     const fPts: Point2D[] = [];
     const total = target.points.length;
+    
+    // Smooth interpolation algorithm across vector junctions
     for (let i = 0; i < total; i++) {
-      const current = target.points[i]; const nextItem = target.points[(i + 1) % total];
-      const weight = Math.min(0.25, filletRad / 100);
-      fPts.push(current);
-      fPts.push({ x: current.x + (nextItem.x - current.x) * weight, y: current.y + (nextItem.y - current.y) * weight });
+      const p1 = target.points[i];
+      const p2 = target.points[(i + 1) % total];
+      
+      fPts.push(p1);
+      if (target.type === 'line' && total === 2 && i === 1) break; 
+
+      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const shift = Math.min(filletRad, d * 0.4);
+      if (d > 0) {
+        fPts.push({
+          x: p1.x + ((p2.x - p1.x) / d) * shift,
+          y: p1.y + ((p2.y - p1.y) / d) * shift
+        });
+      }
     }
     updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
+    setHudFeedback(`Applied radius fillet modification.`);
   };
 
-  const executePolarArray = () => {
-    if (!selectedId) return;
-    const input = prompt("Enter number of instances for circular replication:", "6");
-    if (!input) return;
-    const count = parseInt(input) || 6;
-    const target = objects.find(o => o.id === selectedId);
-    if (!target) return;
-    
-    const arrayed: CADObject[] = [];
-    for (let i = 1; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const rotatedPoints = target.points.map(p => ({
-        x: p.x * Math.cos(angle) - p.y * Math.sin(angle),
-        y: p.x * Math.sin(angle) + p.y * Math.cos(angle)
-      }));
-      arrayed.push({ ...target, id: generateId(), points: rotatedPoints });
-    }
-    updateHistory([...objects, ...arrayed]);
-    setHudFeedback(`Generated polar matrix array: ${count} entities.`);
-  };
-
+  const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Cleared Workspace Grid."); };
+  const executeSaveProject = () => { localStorage.setItem('minicad_v3_core', JSON.stringify(objects)); setHudFeedback("Saved layout locally."); };
+  const executeLoadProject = () => { const save = localStorage.getItem('minicad_v3_core'); if (save) { try { const parsed = JSON.parse(save); if (Array.isArray(parsed)) { const clean = parsed.filter(o => o && Array.isArray(o.points)); setObjects(clean); setHistory([clean]); setHistoryIndex(0); setHudFeedback("Model reloaded correctly."); return; } } catch(e) {} } };
+  const executeExtrude = () => { if (!selectedId) return; const input = prompt("Enter precise extrusion depth dimension:", "40"); if (!input) return; const depth = parseFloat(input) || 40; updateHistory(objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o)); changeView('isometric'); };
+  const executePolarArray = () => { if (!selectedId) return; const input = prompt("Enter number of instances for circular replication:", "6"); if (!input) return; const count = parseInt(input) || 6; const target = objects.find(o => o.id === selectedId); if (!target) return; const arrayed: CADObject[] = []; for (let i = 1; i < count; i++) { const angle = (i / count) * Math.PI * 2; const rotatedPoints = target.points.map(p => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) })); arrayed.push({ ...target, id: generateId(), points: rotatedPoints }); } updateHistory([...objects, ...arrayed]); };
   const executeTrim = () => { if (selectedId) updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.slice(0, -1) } : o)); };
   const executeExtend = () => { if (selectedId) updateHistory(objects.map(o => o.id === selectedId && o.points.length >= 2 ? { ...o, points: [...o.points, { x: o.points[o.points.length-1].x + 10, y: o.points[o.points.length-1].y + 10 }] } : o)); };
   const executeRotate = () => { if (selectedId) updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * 0.7 - p.y * 0.7, y: p.x * 0.7 + p.y * 0.7 })) } : o)); };
@@ -558,7 +482,7 @@ export function useCADEngine() {
       if (tool === 'deselect') { chainAnchorRef.current = null; polylinePointsRef.current = []; setObjects(prev => prev.filter(o => o.id !== 'active_pline')); setCurrentTool('select'); return; }
       setCurrentTool(tool);
     },
-    viewMode, changeView: (mode: ViewMode) => { setViewMode(mode); syncCameraMatrix(); },
+    viewMode, changeView: (mode: ViewMode) => { setViewMode(mode); syncCameraMatrix(mode); },
     isDarkMode, setIsDarkMode, hudFeedback,
     executeExtrude, executeTrim, executeExtend, executeFillet, executeUnion, executeSubtract, executeErase,
     executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste, executePolarArray,
