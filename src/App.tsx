@@ -12,25 +12,41 @@ export default function App() {
   const selectedTargetObj = getSelectedObject();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', color: isDarkMode ? '#f1f5f9' : '#0f172a', fontFamily: 'sans-serif' }}>
+    <div style={{ 
+      display: 'flex', 
+      flexDirection: 'column', 
+      width: '100vw', 
+      height: '100vh', 
+      maxHeight: '100vh', // Forces strict hardware screen clamping
+      overflow: 'hidden', 
+      backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc', 
+      color: isDarkMode ? '#f1f5f9' : '#0f172a', 
+      fontFamily: 'sans-serif' 
+    }}>
       
       {/* HEADER CONTROL CONSOLE GRID */}
-      <header style={{ display: 'flex', flexDirection: 'column', padding: '8px 12px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', gap: '6px' }}>
+      <header style={{ 
+        display: 'flex', 
+        flexDirection: 'column', 
+        padding: '8px 12px', 
+        backgroundColor: '#1e293b', 
+        borderBottom: '1px solid #334155', 
+        gap: '6px',
+        flexShrink: 0 // Prevents header from flattening
+      }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Vector Layout [Engine Base: {unit.toUpperCase()}]</div>
+          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Vector Layout [Engine Base: {unit.toUpperCase()}]</div>
           <button onClick={executeExportPDF} style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
             Convert to PDF
           </button>
         </div>
         
-        {/* ROW 1: CORE STORAGE PERSISTENCE VECTOR */}
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           <button onClick={executeNewProject} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>📄 New</button>
           <button onClick={executeSaveProject} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>💾 Save</button>
           <button onClick={executeLoadProject} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>📂 Open</button>
           <button onClick={executeIncreaseWorkspace} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#e2e8f0', border: 'none', borderRadius: '4px', cursor: 'pointer', color: '#0f172a', fontWeight: 'bold' }}>➕ Expand Grid</button>
           
-          {/* LOCK CONTROLLERS: ORTHO & SNAP CONFIGURATIONS */}
           <button onClick={() => setSnapToGrid(!snapToGrid)} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: snapToGrid ? '#22c55e' : '#64748b', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
             {snapToGrid ? '⚡ SNAP ON' : '⚡ SNAP OFF'}
           </button>
@@ -39,7 +55,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* ROW 2: CAMERA VIEWS */}
         <div style={{ display: 'flex', gap: '4px' }}>
           {['top', 'front', 'side', 'isometric'].map((mode) => (
             <button key={mode} onClick={() => changeView(mode as any)} style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: viewMode === mode ? '#2563eb' : '#475569', color: '#ffffff', border: 'none', borderRadius: '4px', textTransform: 'capitalize', cursor: 'pointer' }}>
@@ -48,7 +63,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* ROW 3: TRACE CONTROLLERS */}
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <button onClick={undo} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px' }}>↩️ Undo</button>
           <button onClick={redo} style={{ padding: '4px 8px', fontSize: '11px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px' }}>↪️ Redo</button>
@@ -60,16 +74,14 @@ export default function App() {
 
       {/* DYNAMIC FIELD ADJUSTMENT PANEL */}
       {selectedTargetObj && (
-        <div style={{ backgroundColor: '#1e1b4b', padding: '6px 12px', display: 'flex', gap: '12px', alignItems: 'center', borderBottom: '2px solid #4338ca', flexWrap: 'wrap' }}>
+        <div style={{ backgroundColor: '#1e1b4b', padding: '6px 12px', display: 'flex', gap: '12px', alignItems: 'center', borderBottom: '2px solid #4338ca', flexWrap: 'wrap', flexShrink: 0 }}>
           <span style={{ color: '#67e8f9', fontSize: '12px', fontWeight: 'bold' }}>Modify Selected {selectedTargetObj.type.toUpperCase()}:</span>
-          
           {selectedTargetObj.type === 'circle' && (
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
               <label style={{ fontSize: '11px', color: '#fff' }}>Radius ({unit}):</label>
               <input type="number" defaultValue={selectedTargetObj.properties?.radius || 0} onChange={(e) => updateSelectedObjectDimensions({ radius: parseFloat(e.target.value) || 0 })} style={{ width: '60px', padding: '2px', fontSize: '11px', borderRadius: '3px', border: 'none' }} />
             </div>
           )}
-
           {selectedTargetObj.type === 'rectangle' && (
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -86,16 +98,36 @@ export default function App() {
       )}
 
       {/* READOUT CONSOLE LOG FEEDBAR */}
-      <div style={{ backgroundColor: '#020617', color: '#fbbf24', padding: '4px 12px', fontSize: '11px', fontFamily: 'monospace' }}>
+      <div style={{ backgroundColor: '#020617', color: '#fbbf24', padding: '4px 12px', fontSize: '11px', fontFamily: 'monospace', flexShrink: 0 }}>
         {hudFeedback}
       </div>
 
-      {/* CORE VIEWPORT CANVAS NODE */}
-      <div style={{ flex: 1, position: 'relative', backgroundColor: '#000000' }}>
+      {/* VIEWPORT CONTAINER WITH HEIGHT INTEGRITY RESTRAINTS */}
+      <div style={{ 
+        flex: 1, 
+        position: 'relative', 
+        backgroundColor: '#000000', 
+        minHeight: 0, // CRITICAL: Permits flex containment without spilling down
+        overflow: 'hidden'
+      }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
 
-        {/* QUICK CONTROL DRAWER CONSOLE */}
-        <div style={{ position: 'absolute', bottom: '8px', left: '50%', transform: 'translateX(-50%)', width: '96%', backgroundColor: 'rgba(15, 23, 42, 0.95)', border: '1px solid #475569', borderRadius: '8px', padding: '6px', display: 'flex', flexDirection: 'column', gap: '4px', zIndex: 100 }}>
+        {/* CONTROLS INJECTED WITH ABSOLUTE OVERLAY TO FORCE DISPLAY REGARDLESS OF CANVAS SIZING */}
+        <div style={{ 
+          position: 'absolute', 
+          bottom: '8px', 
+          left: '50%', 
+          transform: 'translateX(-50%)', 
+          width: '96%', 
+          backgroundColor: 'rgba(15, 23, 42, 0.95)', 
+          border: '1px solid #475569', 
+          borderRadius: '8px', 
+          padding: '6px', 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: '4px', 
+          zIndex: 999 // Guarantees layer placement on top of WebGL rendering loops
+        }}>
           
           {/* PRIMITIVES DRAWER BLOCK */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '3px' }}>
