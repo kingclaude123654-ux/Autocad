@@ -378,7 +378,6 @@ export function useCADEngine() {
     if (isPanningRef.current) { isPanningRef.current = false; return; }
     if (!isDrawingRef.current) return;
 
-    // Direct state decoupling prevents items from vanishing upon finger lift
     isDrawingRef.current = false;
 
     if (currentTool === 'move') { moveStartPointRef.current = null; updateHistory(objects); return; }
@@ -410,7 +409,7 @@ export function useCADEngine() {
         return [...filtered, { id: 'active_pline', type: 'polyline', points: freezePoints, color: '#38bdf8', layer: '0', is3D: false, properties: { length: len } }];
       });
       startPointRef.current = end;
-      isDrawingRef.current = true; // Retain system trace flag for polylines
+      isDrawingRef.current = true; 
       return; 
     } else if (currentToolStr === 'rectangle') {
       const w = Math.abs(end.x - origin.x); const h = Math.abs(end.y - origin.y);
@@ -498,7 +497,6 @@ export function useCADEngine() {
     };
   }, [currentTool, objects, viewMode, selectedId, snapToGrid, orthoMode]);
 
-  // CAD TRANSFORM EXECUTION TOOLSETS
   const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Console: Cleared Workspace Grid."); };
   const executeSaveProject = () => { localStorage.setItem('minicad_v2_save', JSON.stringify(objects)); setHudFeedback("Console: Saved Project Configuration File."); };
   const executeLoadProject = () => { const save = localStorage.getItem('minicad_v2_save'); if (save) { const parsed = JSON.parse(save); setObjects(parsed); setHistory([parsed]); setHistoryIndex(0); setHudFeedback("Model loaded cleanly."); } };
@@ -579,11 +577,12 @@ export function useCADEngine() {
     updateHistory([...objects, ...arrayCopies]);
   };
 
+  // Fixed Naming Variable Mismatch
   const executeScale = () => {
     if (!selectedId) return;
     const ratioInput = prompt("Enter dimensional scale multiplier configuration multiplier ratio:", "2");
-    if (!ratioInput) return; const r = parseFloat(ratioInput) || 2;
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * r, y: p.y * r })) } : o));
+    if (!ratioInput) return; const s = parseFloat(ratioInput) || 2; 
+    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: o.points.map(p => ({ x: p.x * s, y: p.y * s })) } : o));
   };
 
   const executeUnion = () => { if (selectedId) setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#0ea5e9' } : o)); };
