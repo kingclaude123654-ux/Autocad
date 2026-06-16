@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useCADEngine } from './hooks/useCADEngine';
 import { TopToolbar } from './components/TopToolbar';
 import { LeftPanel } from './components/LeftPanel';
