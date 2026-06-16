@@ -16,7 +16,7 @@ export default function App() {
       
       {/* HEADER CONTROL CONSOLE GRID */}
       <header style={{ display: 'flex', flexDirection: 'column', padding: '8px 12px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', gap: '6px' }}>
-        <div style={{ display: 'flex', justifyBetween: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Vector Layout [Engine Base: {unit.toUpperCase()}]</div>
           <button onClick={executeExportPDF} style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
             Convert to PDF
@@ -39,7 +39,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* ROW 2: ZERO-LAG DIRECT MATRIX CAMERA FLIPS */}
+        {/* ROW 2: CAMERA VIEWS */}
         <div style={{ display: 'flex', gap: '4px' }}>
           {['top', 'front', 'side', 'isometric'].map((mode) => (
             <button key={mode} onClick={() => changeView(mode as any)} style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: viewMode === mode ? '#2563eb' : '#475569', color: '#ffffff', border: 'none', borderRadius: '4px', textTransform: 'capitalize', cursor: 'pointer' }}>
@@ -106,7 +106,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* ADVANCED REPAIRS & INTERSECTION BOOLEAN PACK */}
+          {/* ADVANCED REPAIRS & INTERSECTION PACK */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '3px' }}>
             <button onClick={() => setCurrentTool('polygon')} style={{ padding: '5px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: currentTool === 'polygon' ? '#f59e0b' : '#334155', color: '#fff', border: 'none' }}>🔺 TRI</button>
             <button onClick={executeTrim} style={{ padding: '5px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#c2410c', color: '#fff', border: 'none' }}>✂️ TRIM</button>
