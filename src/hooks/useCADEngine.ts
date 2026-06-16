@@ -59,7 +59,6 @@ export function useCADEngine() {
     const grid = new THREE.GridHelper(200, 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
     scene.add(grid);
 
-    // FIX: Replaced custom layout properties with valid continuous LineBasicMaterial specifications
     const previewMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 2 });
     const previewGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
     const previewLine = new THREE.Line(previewGeo, previewMat);
@@ -89,7 +88,6 @@ export function useCADEngine() {
     setObjects(newObjects);
   };
 
-  // Re-sync 3D meshes and 2D math boundary paths perfectly
   useEffect(() => {
     visualObjectsRef.current.forEach((m) => sceneRef.current.remove(m));
     visualObjectsRef.current.clear();
@@ -140,7 +138,6 @@ export function useCADEngine() {
     return null;
   };
 
-  // Drag interaction processing triggers
   const handlePointerDown = (clientX: number, clientY: number) => {
     const pt = get3DPoint(clientX, clientY);
     if (!pt) return;
@@ -313,4 +310,9 @@ export function useCADEngine() {
       else cameraRef.current.position.set(80, 80, 80);
       cameraRef.current.lookAt(0, 0, 0);
     },
-    isDarkMode, setIsDarkMode, executeExtrude, executeTrim, execute
+    isDarkMode, setIsDarkMode, executeExtrude, executeTrim, executeFillet, executeUnion, clearChain, hudFeedback,
+    handlePointerDown, handlePointerMove, handlePointerUp,
+    undo: () => historyIndex > 0 && (setHistoryIndex(historyIndex - 1), setObjects(history[historyIndex - 1])),
+    redo: () => historyIndex < history.length - 1 && (setHistoryIndex(historyIndex + 1), setObjects(history[historyIndex + 1]))
+  };
+}
