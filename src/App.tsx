@@ -16,7 +16,7 @@ export default function App() {
       
       {/* HEADER CONTROL CONSOLE GRID */}
       <header style={{ display: 'flex', flexDirection: 'column', padding: '8px 12px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', gap: '6px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyBetween: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Vector Layout [Engine Base: {unit.toUpperCase()}]</div>
           <button onClick={executeExportPDF} style={{ padding: '4px 10px', fontSize: '11px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
             Convert to PDF
