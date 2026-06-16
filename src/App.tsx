@@ -1,5 +1,4 @@
 import { useCADEngine } from './hooks/useCADEngine';
-import { ToolType, ViewMode } from './types/cad';
 
 export default function App() {
   const {
@@ -45,7 +44,7 @@ export default function App() {
       fontFamily: 'sans-serif'
     }}>
       
-      {/* HEADER PANEL: FILE OPS & GLOBAL TOGGLES */}
+      {/* HEADER PANEL: FILE ACTIONS & WORKSPACE DIMENSIONS */}
       <header style={{
         display: 'flex',
         flexDirection: 'column',
@@ -57,11 +56,11 @@ export default function App() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Pro 3D Engine</div>
           <button onClick={executeExportPDF} style={{ padding: '4px 12px', fontSize: '11px', backgroundColor: '#ef4444', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}>
-            picture_as_pdf Convert to PDF
+            Convert to PDF
           </button>
         </div>
         
-        {/* Row 1: Core File Storage operations */}
+        {/* Row 1: App Management Vectors */}
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           <button onClick={executeNewProject} style={{ padding: '5px 10px', fontSize: '12px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>📄 New</button>
           <button onClick={executeSaveProject} style={{ padding: '5px 10px', fontSize: '12px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>💾 Save As</button>
@@ -69,12 +68,12 @@ export default function App() {
           <button onClick={executeIncreaseWorkspace} style={{ padding: '5px 10px', fontSize: '12px', backgroundColor: '#e2e8f0', border: '1px solid #94a3b8', borderRadius: '4px', cursor: 'pointer', color: '#0f172a', fontWeight: 'bold' }}>➕ Expand Grid</button>
         </div>
 
-        {/* Row 2: Instant High-Performance View Switch Matrix */}
+        {/* Row 2: Smooth View Matrix Option Angles */}
         <div style={{ display: 'flex', gap: '4px' }}>
-          {(['top', 'front', 'side', 'isometric'] as ViewMode[]).map((mode) => (
+          {['top', 'front', 'side', 'isometric'].map((mode) => (
             <button
               key={mode}
-              onClick={() => changeView(mode)}
+              onClick={() => changeView(mode as any)}
               style={{
                 padding: '4px 10px',
                 fontSize: '12px',
@@ -92,7 +91,7 @@ export default function App() {
           ))}
         </div>
 
-        {/* Row 3: History & Environment Theme Switches */}
+        {/* Row 3: History Replay Traces */}
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <button onClick={undo} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>↩️ Undo</button>
           <button onClick={redo} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>↪️ Redo</button>
@@ -102,7 +101,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* READOUT BAR FOR LIVE CONSOLE PARAMETERS & DIMENSIONS */}
+      {/* READOUT HUD CONSOLE BAR */}
       <div style={{
         backgroundColor: '#020617',
         color: '#fbbf24',
@@ -114,11 +113,11 @@ export default function App() {
         {hudFeedback}
       </div>
 
-      {/* MAIN VIEWPORT MATRIX MESH CONTAINER */}
+      {/* MAIN VIEWPORT MATRIX VIEW */}
       <div style={{ flex: 1, position: 'relative', backgroundColor: '#000000' }}>
         <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
 
-        {/* FLOATING PRIMARY CONTROL INTERFACE MODULE */}
+        {/* BOTTOM QUICK ACTIONS FLOATING PANEL */}
         <div style={{
           position: 'absolute',
           bottom: '10px',
@@ -136,9 +135,9 @@ export default function App() {
           zIndex: 100
         }}>
           
-          {/* SKETCH PRIMITIVES DRAFTING BLOCK */}
+          {/* GEOMETRIC PROFILE DRAW VECTOR PRIMITIVES */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px' }}>
-            {(['select', 'line', 'polyline', 'rectangle', 'circle'] as ToolType[]).map((tool) => (
+            {['select', 'line', 'polyline', 'rectangle', 'circle'].map((tool) => (
               <button
                 key={tool}
                 onClick={() => setCurrentTool(tool)}
@@ -158,7 +157,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* ADVANCED VECTOR INTERSECTIONS & SOLID MODIFIERS */}
+          {/* ADVANCED VECTOR REPAIRS & BOOLEAN SOLID MODIFIERS */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px' }}>
             <button onClick={() => setCurrentTool('polygon')} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: currentTool === 'polygon' ? '#f59e0b' : '#334155', color: '#fff', border: 'none' }}>🔺 TRI</button>
             <button onClick={executeTrim} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#c2410c', color: '#fff', border: 'none' }}>✂️ TRIM</button>
@@ -168,9 +167,9 @@ export default function App() {
             <button onClick={executeSubtract} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#b91c1c', color: '#fff', border: 'none' }}>➖ SUBTRACT</button>
           </div>
 
-          {/* TRANSFORMS & CLIPBOARD UTILITIES ROW */}
+          {/* SPATIAL TRANSFORMS MATRIX OPERATIONS */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '4px' }}>
-            <button onClick={() => setCurrentTool('move' as any)} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: (currentTool as string) === 'move' ? '#10b981' : '#475569', color: '#fff', border: 'none' }}>🗺️ MOVE</button>
+            <button onClick={() => setCurrentTool('move')} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: currentTool === 'move' ? '#10b981' : '#475569', color: '#fff', border: 'none' }}>🗺️ MOVE</button>
             <button onClick={executeCopy} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#475569', color: '#fff', border: 'none' }}>📋 COPY</button>
             <button onClick={executePaste} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#0ea5e9', color: '#fff', border: 'none' }}>📥 PASTE</button>
             <button onClick={executeRotate} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#6d28d9', color: '#fff', border: 'none' }}>🔄 ROTATE</button>
@@ -178,11 +177,11 @@ export default function App() {
             <button onClick={executeScale} style={{ padding: '6px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', backgroundColor: '#0369a1', color: '#fff', border: 'none' }}>⚖️ SCALE</button>
           </div>
 
-          {/* DOCK FOOTER ACTIONS FOOTPRINT */}
+          {/* DOCK PANEL FOOTER TERMINATION BUTTONS */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px', borderTop: '1px solid #334155' }}>
             <button onClick={executePolarArray} style={{ padding: '5px 10px', fontSize: '10px', backgroundColor: '#701a75', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>🔆 POLAR ARRAY</button>
             <button onClick={executeExtrude} style={{ padding: '5px 12px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#a21caf', color: '#fff', border: 'none', borderRadius: '4px' }}>📦 EXTRUDE 3D</button>
-            <button onClick={() => setCurrentTool('deselect' as any)} style={{ padding: '5px 8px', fontSize: '11px', backgroundColor: '#64748b', color: '#fff', border: 'none', borderRadius: '4px' }}>Reset</button>
+            <button onClick={() => setCurrentTool('deselect')} style={{ padding: '5px 8px', fontSize: '11px', backgroundColor: '#64748b', color: '#fff', border: 'none', borderRadius: '4px' }}>Reset</button>
             <button onClick={executeErase} style={{ padding: '5px 14px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e11d48', color: '#fff', border: 'none', borderRadius: '4px' }}>🗑️ ERASE</button>
           </div>
 
