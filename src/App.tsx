@@ -35,7 +35,7 @@ export default function App() {
   const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
   const [workspaceSize] = useState<number>(500);
-  const [gridSpacing, setGridSpacing] = useState<number>(10);
+  const [gridSpacing] = useState<number>(10);
 
   // History Stack
   const [history, setHistory] = useState<CADObject[][]>([[]]);
