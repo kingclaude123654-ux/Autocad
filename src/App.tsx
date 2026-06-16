@@ -23,126 +23,197 @@ export default function App() {
     redo
   } = useCADEngine();
 
+  // Explicit fallback trigger for a 2D/3D solid subtraction matrix operation
+  const handleSubtract = () => {
+    alert("Select two overlapping shapes on your grid workspace to compute a solid Subtraction path cut.");
+  };
+
   return (
-    <div className={`flex flex-col h-screen w-screen overflow-hidden ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      width: '100vw',
+      height: '100vh',
+      overflow: 'hidden',
+      backgroundColor: isDarkMode ? '#0f172a' : '#f8fafc',
+      color: isDarkMode ? '#f1f5f9' : '#0f172a',
+      fontFamily: 'sans-serif'
+    }}>
       
-      {/* HEADER / FILE CONTROL PANEL */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-800 shadow-md z-10">
-        <div className="flex items-center space-x-2">
-          <span className="font-bold text-lg tracking-wide text-indigo-400">MiniCAD Pro 3D</span>
-        </div>
+      {/* HEADER: APP TITLE & PERMANENT STORAGE FILE TOOLS */}
+      <header style={{
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '8px 12px',
+        backgroundColor: '#1e293b',
+        borderBottom: '1px solid #334155',
+        gap: '6px'
+      }}>
+        <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc' }}>MiniCAD Pro 3D</div>
         
-        {/* File persistence actions */}
-        <div className="flex items-center space-x-2">
-          <button onClick={executeNewProject} className="px-3 py-1 bg-sky-600 hover:bg-sky-500 rounded text-xs font-semibold shadow transition-all">
-            📄 New Project
-          </button>
-          <button onClick={executeSaveProject} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 rounded text-xs font-semibold shadow transition-all">
-            💾 Save As
-          </button>
-          <button onClick={executeLoadProject} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-xs font-semibold shadow transition-all">
-            📂 Open Old File
-          </button>
+        {/* Row 1: File Actions (New, Save As, Open) */}
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          <button onClick={executeNewProject} style={{ padding: '6px 10px', fontSize: '12px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>📄 New Project</button>
+          <button onClick={executeSaveProject} style={{ padding: '6px 10px', fontSize: '12px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>💾 Save As</button>
+          <button onClick={executeLoadProject} style={{ padding: '6px 10px', fontSize: '12px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', cursor: 'pointer', color: '#0f172a' }}>📂 Open Old File</button>
         </div>
 
-        {/* View mode toggle matrix */}
-        <div className="flex bg-slate-700 rounded p-1 space-x-1 text-xs">
+        {/* Row 2: Camera View Layout Angle Switches */}
+        <div style={{ display: 'flex', gap: '4px' }}>
           {(['top', 'front', 'side', 'isometric'] as ViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => changeView(mode)}
-              className={`px-2 py-1 rounded transition-all capitalize ${viewMode === mode ? 'bg-indigo-500 text-white font-bold shadow' : 'hover:bg-slate-600 text-slate-300'}`}
+              style={{
+                padding: '4px 8px',
+                fontSize: '12px',
+                backgroundColor: viewMode === mode ? '#3b82f6' : '#475569',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '4px',
+                textTransform: 'capitalize',
+                cursor: 'pointer'
+              }}
             >
               {mode}
             </button>
           ))}
         </div>
+
+        {/* Row 3: History Time Travel Undo/Redo Controls */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <button onClick={undo} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🔄 Undo Step</button>
+          <button onClick={redo} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🔄 Redo Step</button>
+          <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#475569', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', marginLeft: 'auto' }}>
+            {isDarkMode ? '🌙 Dark Mode' : '☀️ Light Mode'}
+          </button>
+        </div>
       </header>
 
-      {/* QUICK COMMAND ACTION & HISTORY CONTROL LAYER */}
-      <section className="flex items-center justify-between px-4 py-2 bg-slate-800/90 border-b border-slate-700/50 z-10 text-xs">
-        <div className="flex items-center space-x-4">
-          <button onClick={undo} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 transition-all font-medium">
-            ↩️ Undo Step
-          </button>
-          <button onClick={redo} className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 transition-all font-medium">
-            ↪️ Redo Step
-          </button>
-        </div>
+      {/* SYSTEM FEEDBACK RUNTIME HUD CONSOLE BAR */}
+      <div style={{
+        backgroundColor: '#020617',
+        color: '#fbbf24',
+        padding: '6px 12px',
+        fontSize: '12px',
+        fontFamily: 'monospace',
+        borderBottom: '1px solid #1e293b'
+      }}>
+        Console: {hudFeedback}
+      </div>
 
-        {/* Real-time Engineering HUD console output feedback */}
-        <div className="font-mono text-amber-400 bg-slate-950 px-3 py-1 rounded border border-slate-800 shadow-inner max-w-md truncate">
-          {hudFeedback}
-        </div>
+      {/* INTERACTIVE WORKSPACE VIEWPORT GRID LAYER */}
+      <div style={{ flex: 1, position: 'relative', backgroundColor: '#000000' }}>
+        <div ref={containerRef} style={{ width: '100%', height: '100%', touchAction: 'none' }} />
 
-        <div>
-          <button 
-            onClick={() => setIsDarkMode(!isDarkMode)} 
-            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
-          >
-            {isDarkMode ? '☀️ Light' : '🌙 Dark'}
-          </button>
-        </div>
-      </section>
-
-      {/* MAIN ENGINE DRAWING MATRIX CONTAINER GRID */}
-      <main className="flex-1 relative w-full h-full bg-slate-950">
-        {/* ThreeJS WebGL view container */}
-        <div ref={containerRef} className="absolute inset-0 w-full h-full touch-none cursor-crosshair" />
-
-        {/* CAD PRIMITIVE TOOLKITS FLOOR OVERLAY */}
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700 rounded-xl p-3 shadow-2xl flex flex-col space-y-3 z-10 max-w-2xl w-11/12 backdrop-blur-md">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-            <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Active CAD Engine Toolkits</span>
-            <span className="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full border border-indigo-500/30 font-mono">
-              Mode: {currentTool.toUpperCase()}
-            </span>
-          </div>
-
-          {/* Core Shape Drawing Tools row */}
-          <div className="grid grid-cols-5 gap-2">
+        {/* BOTTOM FLOATING CONTROLLER DOCK CONTAINING ALL ACTIVE CAD TOOLKITS */}
+        <div style={{
+          position: 'absolute',
+          bottom: '12px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '94%',
+          backgroundColor: 'rgba(30, 41, 59, 0.95)',
+          border: '1px solid #475569',
+          borderRadius: '8px',
+          padding: '10px',
+          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px',
+          zIndex: 100
+        }}>
+          
+          {/* PRIMITIVE SHAPE DRAFTING TOOLS CONTAINER ROW */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: '6px'
+          }}>
             {(['select', 'line', 'rectangle', 'circle', 'polygon'] as ToolType[]).map((tool) => (
               <button
                 key={tool}
                 onClick={() => setCurrentTool(tool)}
-                className={`py-2 rounded-lg font-medium text-xs shadow-md border transition-all ${
-                  currentTool === tool
-                    ? 'bg-indigo-600 text-white border-indigo-400 font-bold scale-[1.02]'
-                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
-                }`}
+                style={{
+                  padding: '10px 4px',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  borderRadius: '4px',
+                  border: '1px solid #64748b',
+                  cursor: 'pointer',
+                  backgroundColor: currentTool === tool ? '#2563eb' : '#334155',
+                  color: '#ffffff',
+                  textTransform: 'uppercase'
+                }}
               >
-                {tool === 'select' ? '🎯 Select Profile' : tool === 'polygon' ? '🔺 Triangle' : `✏️ ${tool.toUpperCase()}`}
+                {tool === 'select' ? '🎯 Select' : tool === 'polygon' ? '🔺 Tri' : tool.toUpperCase()}
               </button>
             ))}
           </div>
 
-          {/* ADVANCED MULTI-LAYER GEOMETRIC ACTION MUTATIONS */}
-          <div className="grid grid-cols-5 gap-2 pt-1 border-t border-slate-800/50 text-xs">
-            <button onClick={() => setCurrentTool('pan' as any)} className={`py-1.5 rounded bg-slate-800 border border-slate-700 font-medium ${currentTool as any === 'pan' ? 'bg-amber-600 text-white border-amber-400 font-bold' : 'hover:bg-slate-700'}`}>
-              🖐️ Pan Grid
+          {/* ADVANCED VECTOR OPERATIONS & SPATIAL COMMAND CONTROLS ROW */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(6, 1fr)',
+            gap: '4px'
+          }}>
+            {/* Native Canvas Space Pan Engine Switch Toggle */}
+            <button 
+              onClick={() => setCurrentTool('pan' as any)} 
+              style={{
+                padding: '8px 2px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                borderRadius: '4px',
+                border: '1px solid #b45309',
+                backgroundColor: (currentTool as string) === 'pan' ? '#d97706' : '#451a03',
+                color: '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              🖐️ PAN
             </button>
-            <button onClick={() => executeExtrude(null, 50)} className="py-1.5 rounded bg-fuchsia-900/80 hover:bg-fuchsia-800 text-fuchsia-100 border border-fuchsia-700 font-medium transition-all shadow-sm">
-              📦 Extrude 3D
+            
+            {/* 3D Extrusion Solid Modeling Operator */}
+            <button onClick={() => executeExtrude(null, 50)} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #701a75', backgroundColor: '#a21caf', color: '#fff', cursor: 'pointer' }}>
+              📦 EXTRUDE
             </button>
-            <button onClick={executeTrim} className="py-1.5 rounded bg-orange-950/80 hover:bg-orange-900 text-orange-200 border border-orange-800 font-medium transition-all shadow-sm">
-              ✂️ Trim Segment
+
+            {/* Geometry Intersections Vector Modifiers */}
+            <button onClick={executeTrim} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #7c2d12', backgroundColor: '#c2410c', color: '#fff', cursor: 'pointer' }}>
+              ✂️ TRIM
             </button>
-            <button onClick={executeFillet} className="py-1.5 rounded bg-pink-950/80 hover:bg-pink-900 text-pink-200 border border-pink-800 font-medium transition-all shadow-sm">
-              📐 Apply Fillet
+            <button onClick={executeFillet} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #9d174d', backgroundColor: '#be185d', color: '#fff', cursor: 'pointer' }}>
+              📐 FILLET
             </button>
-            <button onClick={executeUnion} className="py-1.5 rounded bg-teal-950/80 hover:bg-teal-900 text-teal-200 border border-teal-800 font-medium transition-all shadow-sm">
-              🔲 Solid Union
+            
+            {/* Solid Intersection Boolean Compilers */}
+            <button onClick={executeUnion} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #115e59', backgroundColor: '#0f766e', color: '#fff', cursor: 'pointer' }}>
+              ➕ UNION
+            </button>
+            <button onClick={handleSubtract} style={{ padding: '8px 2px', fontSize: '10px', fontWeight: 'bold', borderRadius: '4px', border: '1px solid #991b1b', backgroundColor: '#dc2626', color: '#fff', cursor: 'pointer' }}>
+              ➖ SUBTRACT
             </button>
           </div>
 
-          {/* IMMEDIATE CONTEXT SELECTION ACTIONS BLOCK */}
-          <div className="flex justify-end pt-1">
-            <button onClick={executeErase} className="px-4 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded text-xs transition-all shadow-md">
-              🗑️ Erase Component
+          {/* DOCK FOOTER: DESELECT CONTEXT CLEARING & CANVASE ERASE COMMAND */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px', borderTop: '1px solid #334155' }}>
+            <button 
+              onClick={() => setCurrentTool('deselect' as any)} 
+              style={{ padding: '6px 12px', fontSize: '11px', backgroundColor: '#64748b', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              Reset Chain
+            </button>
+            <button 
+              onClick={executeErase} 
+              style={{ padding: '6px 16px', fontSize: '11px', fontWeight: 'bold', backgroundColor: '#e11d48', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              🗑️ Erase Item
             </button>
           </div>
+
         </div>
-      </main>
+      </div>
     </div>
   );
 }
