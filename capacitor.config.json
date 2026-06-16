@@ -1,0 +1,6 @@
+{
+  "appId": "com.minicad.app",
+  "appName": "MiniCADPro",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
