@@ -1,4 +1,3 @@
-import React from 'react';
 import { useCADEngine } from './hooks/useCADEngine';
 import { ToolType, ViewMode } from './types/cad';
 
@@ -88,10 +87,10 @@ export default function App() {
 
       {/* MAIN ENGINE DRAWING MATRIX CONTAINER GRID */}
       <main className="flex-1 relative w-full h-full bg-slate-950">
-        {/* ThreeJS WebGL view viewport viewport container */}
+        {/* ThreeJS WebGL view container */}
         <div ref={containerRef} className="absolute inset-0 w-full h-full touch-none cursor-crosshair" />
 
-        {/* CAD PRIMITIVE FLUTTER TOOLKITS FLOOR OVERLAY */}
+        {/* CAD PRIMITIVE TOOLKITS FLOOR OVERLAY */}
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-slate-900/95 border border-slate-700 rounded-xl p-3 shadow-2xl flex flex-col space-y-3 z-10 max-w-2xl w-11/12 backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
             <span className="text-xs font-bold text-slate-400 tracking-wider uppercase">Active CAD Engine Toolkits</span>
