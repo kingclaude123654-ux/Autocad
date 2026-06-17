@@ -119,14 +119,14 @@ const App: React.FC = () => {
 
         <section style={{ marginBottom: '20px' }}>
           <h3 style={{ fontSize: '0.8rem', color: '#888', marginBottom: '8px' }}>VIEW</h3>
-          <div style={{ marginBottom: '5px' }}>
+          <div style={{ marginBottom: '10px' }}>
             <label style={{ fontSize: '0.7rem' }}><input type="checkbox" checked={orthoMode} onChange={() => setOrthoMode(!orthoMode)} /> ORTHO</label>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '2px' }}>
-            <button onClick={() => setViewMode('top')}>T</button>
-            <button onClick={() => setViewMode('front')}>F</button>
-            <button onClick={() => setViewMode('side')}>S</button>
-            <button onClick={() => setViewMode('isometric')}>I</button>
+            <button onClick={() => setViewMode('top')} style={{ background: viewMode === 'top' ? '#3498db' : '#333' }}>T</button>
+            <button onClick={() => setViewMode('front')} style={{ background: viewMode === 'front' ? '#3498db' : '#333' }}>F</button>
+            <button onClick={() => setViewMode('side')} style={{ background: viewMode === 'side' ? '#3498db' : '#333' }}>S</button>
+            <button onClick={() => setViewMode('isometric')} style={{ background: viewMode === 'isometric' ? '#3498db' : '#333' }}>I</button>
           </div>
         </section>
 
