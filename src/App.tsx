@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useCADEngine } from './src/hooks/useCADEngine';
+import { useCADEngine } from './hooks/useCADEngine';
 import * as THREE from 'three';
 
 const App: React.FC = () => {
@@ -7,7 +7,6 @@ const App: React.FC = () => {
     canvasRef, 
     objects, 
     selectedId, 
-    viewMode, 
     orthoMode, 
     setOrthoMode, 
     setViewMode, 
@@ -156,6 +155,30 @@ const App: React.FC = () => {
               <label>Rotate: </label>
               <input type="number" style={{ width: '50px' }} value={rotateAngle} onChange={(e) => setRotateAngle(parseFloat(e.target.value))} />
               <button onClick={handleRotate} disabled={!selectedId}>Apply</button>
+            </div>
+            <div style={{ marginBottom: '5px' }}>
+              <label>Offset: </label>
+              <input type="number" style={{ width: '50px' }} value={offsetDistance} onChange={(e) => setOffsetDistance(parseFloat(e.target.value))} />
+              <button onClick={handleOffset} disabled={!selectedId}>Apply</button>
+            </div>
+            <div style={{ marginBottom: '5px' }}>
+              <label>Scale: </label>
+              <input type="number" style={{ width: '50px' }} value={scaleFactor} onChange={(e) => setScaleFactor(parseFloat(e.target.value))} />
+              <button onClick={handleScale} disabled={!selectedId}>Apply</button>
+            </div>
+          </div>
+        </section>
+
+        <section style={{ marginBottom: '20px' }}>
+          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>Boolean Ops</h4>
+          <div style={{ fontSize: '0.8rem' }}>
+            <input type="text" placeholder="Obj ID 1" style={{ width: '100%', marginBottom: '5px' }} value={objectId1} onChange={(e) => setObjectId1(e.target.value)} />
+            <input type="text" placeholder="Obj ID 2" style={{ width: '100%', marginBottom: '5px' }} value={objectId2} onChange={(e) => setObjectId2(e.target.value)} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+              <button onClick={handleUnion}>Union</button>
+              <button onClick={handleSubtract}>Subtract</button>
+              <button onClick={handleTrim}>Trim</button>
+              <button onClick={handleExtend}>Extend</button>
             </div>
           </div>
         </section>
