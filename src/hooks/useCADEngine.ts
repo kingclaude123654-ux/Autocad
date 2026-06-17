@@ -1,4 +1,4 @@
-// useCADEngine.ts
+// src/hooks/useCADEngine.ts
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
@@ -85,14 +85,14 @@ export const useCADEngine = () => {
 
     // Mobile-optimized renderer with performance settings
     const renderer = new THREE.WebGLRenderer({ 
-      antialias: false, // Disabled for mobile performance
+      antialias: false,
       preserveDrawingBuffer: true,
       alpha: true,
       powerPreference: "high-performance",
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for mobile
-    renderer.shadowMap.enabled = false; // Disabled for mobile performance
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = false;
     rendererRef.current = renderer;
 
     container.appendChild(renderer.domElement);
@@ -134,7 +134,7 @@ export const useCADEngine = () => {
       
       // Limit FPS on mobile for battery saving
       const deltaTime = time - lastTime;
-      if (deltaTime < 32) return; // ~30 FPS cap for mobile
+      if (deltaTime < 32) return;
       lastTime = time;
       
       if (controlsRef.current) {
@@ -242,7 +242,7 @@ export const useCADEngine = () => {
         timestamp: Date.now(),
       });
 
-      if (newHistory.length > 30) { // Reduced history for mobile memory
+      if (newHistory.length > 30) {
         newHistory.shift();
       }
 
@@ -313,20 +313,33 @@ export const useCADEngine = () => {
   }, []);
 
   const generateId = useCallback(() => {
-    return `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return 'obj_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   }, []);
 
   const createCADObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): CADObject => {
+    let geometry: THREE.BufferGeometry;
+    let material: THREE.Material | THREE.Material[];
+
+    if (mesh instanceof THREE.Group) {
+      const child = mesh.children[0];
+      if (child instanceof THREE.Mesh) {
+        geometry = child.geometry;
+        material = child.material;
+      } else {
+        geometry = new THREE.BufferGeometry();
+        material = new THREE.MeshStandardMaterial();
+      }
+    } else {
+      geometry = mesh.geometry;
+      material = mesh.material;
+    }
+
     return {
       id: generateId(),
       mesh,
       type,
-      geometry: mesh instanceof THREE.Group ? 
-        (mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).geometry : new THREE.BufferGeometry()) : 
-        mesh.geometry,
-      material: mesh instanceof THREE.Group ? 
-        (mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).material : new THREE.MeshStandardMaterial()) : 
-        mesh.material,
+      geometry,
+      material,
       position: mesh.position.clone(),
       rotation: mesh.rotation.clone(),
       scale: mesh.scale.clone(),
@@ -407,7 +420,7 @@ export const useCADEngine = () => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     
-    let target = new THREE.Vector3(0, 0, 0);
+    const target = new THREE.Vector3(0, 0, 0);
     let position = new THREE.Vector3();
 
     switch (viewMode) {
@@ -480,82 +493,6 @@ export const useCADEngine = () => {
     });
   }, []);
 
-  // Mobile touch drawing handlers
-  const handleTouchStart = useCallback((event: TouchEvent) => {
-    event.preventDefault();
-    const touch = event.touches[0];
-    touchStartRef.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      time: Date.now(),
-    };
-
-    if (state.activeTool === 'select') {
-      handleObjectSelection(touch.clientX, touch.clientY);
-    } else if (['line', 'polyline', 'rectangle', 'circle'].includes(state.activeTool)) {
-      const point = screenToWorld(touch.clientX, touch.clientY);
-      if (point) {
-        setState(prev => ({
-          ...prev,
-          isDrawing: true,
-          drawingPoints: [...prev.drawingPoints, point],
-        }));
-      }
-    }
-  }, [state.activeTool]);
-
-  const handleTouchMove = useCallback((event: TouchEvent) => {
-    event.preventDefault();
-    if (!state.isDrawing) return;
-
-    const touch = event.touches[0];
-    const point = screenToWorld(touch.clientX, touch.clientY);
-    
-    if (point && state.drawingPoints.length > 0) {
-      // Update preview line
-      if (tempLineRef.current && sceneRef.current) {
-        sceneRef.current.remove(tempLineRef.current);
-      }
-
-      const points = [...state.drawingPoints, point];
-      if (state.activeTool === 'line' && points.length >= 2) {
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 1 });
-        tempLineRef.current = new THREE.Line(geometry, material);
-        sceneRef.current?.add(tempLineRef.current);
-      }
-    }
-  }, [state.isDrawing, state.drawingPoints, state.activeTool]);
-
-  const handleTouchEnd = useCallback((event: TouchEvent) => {
-    event.preventDefault();
-    
-    if (state.isDrawing) {
-      const touchDuration = Date.now() - touchStartRef.current.time;
-      
-      // Double tap detection (for completing polyline)
-      if (touchDuration < 300 && state.drawingPoints.length > 1) {
-        if (state.activeTool === 'line' && state.drawingPoints.length >= 2) {
-          createLine(state.drawingPoints[0], state.drawingPoints[1]);
-        } else if (state.activeTool === 'polyline' && state.drawingPoints.length >= 3) {
-          createPolyline(state.drawingPoints);
-        }
-        
-        // Cleanup drawing state
-        if (tempLineRef.current && sceneRef.current) {
-          sceneRef.current.remove(tempLineRef.current);
-          tempLineRef.current = null;
-        }
-        
-        setState(prev => ({
-          ...prev,
-          isDrawing: false,
-          drawingPoints: [],
-        }));
-      }
-    }
-  }, [state.isDrawing, state.drawingPoints, state.activeTool]);
-
   // Convert screen coordinates to world position
   const screenToWorld = useCallback((x: number, y: number): THREE.Vector3 | null => {
     if (!cameraRef.current || !rendererRef.current) return null;
@@ -568,7 +505,6 @@ export const useCADEngine = () => {
 
     raycasterRef.current.setFromCamera(mouse, cameraRef.current);
     
-    // Intersect with ground plane
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const intersection = new THREE.Vector3();
     raycasterRef.current.ray.intersectPlane(plane, intersection);
@@ -604,7 +540,7 @@ export const useCADEngine = () => {
     const intersects = raycasterRef.current.intersectObjects(meshes, true);
     
     if (intersects.length > 0) {
-      let intersectedObject = intersects[0].object;
+      const intersectedObject = intersects[0].object;
       let foundId: string | null = null;
 
       state.objects.forEach(obj => {
@@ -619,6 +555,79 @@ export const useCADEngine = () => {
       selectObject(null);
     }
   }, [state.objects, selectObject]);
+
+  // Mobile touch handlers
+  const handleTouchStart = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    const touch = event.touches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+
+    if (state.activeTool === 'select') {
+      handleObjectSelection(touch.clientX, touch.clientY);
+    } else if (['line', 'polyline', 'rectangle', 'circle'].includes(state.activeTool)) {
+      const point = screenToWorld(touch.clientX, touch.clientY);
+      if (point) {
+        setState(prev => ({
+          ...prev,
+          isDrawing: true,
+          drawingPoints: [...prev.drawingPoints, point],
+        }));
+      }
+    }
+  }, [state.activeTool, handleObjectSelection, screenToWorld]);
+
+  const handleTouchMove = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    if (!state.isDrawing) return;
+
+    const touch = event.touches[0];
+    const point = screenToWorld(touch.clientX, touch.clientY);
+    
+    if (point && state.drawingPoints.length > 0) {
+      if (tempLineRef.current && sceneRef.current) {
+        sceneRef.current.remove(tempLineRef.current);
+      }
+
+      const points = [...state.drawingPoints, point];
+      if (state.activeTool === 'line' && points.length >= 2) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+        tempLineRef.current = new THREE.Line(geometry, material);
+        sceneRef.current?.add(tempLineRef.current);
+      }
+    }
+  }, [state.isDrawing, state.drawingPoints, state.activeTool, screenToWorld]);
+
+  const handleTouchEnd = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    
+    if (state.isDrawing) {
+      const touchDuration = Date.now() - touchStartRef.current.time;
+      
+      if (touchDuration < 300 && state.drawingPoints.length > 1) {
+        if (state.activeTool === 'line' && state.drawingPoints.length >= 2) {
+          createLine(state.drawingPoints[0], state.drawingPoints[1]);
+        } else if (state.activeTool === 'polyline' && state.drawingPoints.length >= 3) {
+          createPolyline(state.drawingPoints);
+        }
+        
+        if (tempLineRef.current && sceneRef.current) {
+          sceneRef.current.remove(tempLineRef.current);
+          tempLineRef.current = null;
+        }
+        
+        setState(prev => ({
+          ...prev,
+          isDrawing: false,
+          drawingPoints: [],
+        }));
+      }
+    }
+  }, [state.isDrawing, state.drawingPoints, state.activeTool]);
 
   // Drawing tools
   const createLine = useCallback((start: THREE.Vector3, end: THREE.Vector3) => {
@@ -658,7 +667,7 @@ export const useCADEngine = () => {
   }, [addObject]);
 
   const createCircle = useCallback((center: THREE.Vector3, radius: number) => {
-    const geometry = new THREE.CircleGeometry(radius, 32); // Reduced segments for mobile
+    const geometry = new THREE.CircleGeometry(radius, 32);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0xe24a4a, 
       side: THREE.DoubleSide,
@@ -682,7 +691,7 @@ export const useCADEngine = () => {
       const extrudeSettings = {
         steps: 1,
         depth: distance,
-        bevelEnabled: false, // Disabled for mobile performance
+        bevelEnabled: false,
       };
 
       const shape = new THREE.Shape();
@@ -835,7 +844,7 @@ export const useCADEngine = () => {
     });
   }, [saveToHistory]);
 
-  const executeRotate = useCallback((objectId: string, axis: 'x' | 'y' | 'z', angle: number) => {
+  const executeRotate = useCallback((objectId: string, axis: string, angle: number) => {
     setState(prev => {
       const obj = prev.objects.find(o => o.id === objectId);
       if (!obj) return prev;
