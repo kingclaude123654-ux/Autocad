@@ -27,7 +27,6 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('line');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
-  const [isDarkMode] = useState<boolean>(true); // Locked dark mode canvas setup
   const [hudFeedback, setHudFeedback] = useState<string>('System Active. Select tool to begin drafting.');
 
   // Workspace Configurations
@@ -36,6 +35,7 @@ export default function App() {
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
   const workspaceSize = 500;
   const gridSpacing = 10;
+  const isDarkMode = true; // Hardcoded configuration variable to pass strict TS compilation bounds
 
   // Global Time-Travel History Management (Undo / Redo)
   const [history, setHistory] = useState<CADObject[][]>([[]]);
@@ -226,7 +226,6 @@ export default function App() {
     }
 
     if (!isDrawingRef.current || !startPointRef.current) {
-      // Allow move/copy modifications tracking even without structural draw origins
       if (isDrawingRef.current && moveStartPointRef.current && stateRef.current.selectedId) {
         const pts = get3DPoint(clientX, clientY);
         if (!pts) return;
@@ -258,7 +257,6 @@ export default function App() {
       } else if (stateRef.current.currentTool === 'rectangle') {
         pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
       } else if (stateRef.current.currentTool === 'polygon') {
-        // Uniform Triangle/Polygon Generator Engine
         for (let i = 0; i <= 3; i++) { const alpha = (i / 3) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
       } else if (stateRef.current.currentTool === 'circle') {
         for (let i = 0; i <= 64; i++) { const alpha = (i / 64) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
@@ -274,7 +272,6 @@ export default function App() {
 
     isDrawingRef.current = false;
     
-    // Process Move & Copy Execution Pipelines Distinctly
     if ((stateRef.current.currentTool === 'move' || stateRef.current.currentTool === 'copy') && moveStartPointRef.current && stateRef.current.selectedId) {
       moveStartPointRef.current = null;
       if (isCopyingRef.current) {
@@ -371,7 +368,7 @@ export default function App() {
     rendererRef.current = renderer;
 
     const scene = sceneRef.current;
-    scene.background = new THREE.Color(0x0f172a); // Rigid dark setup matching workspace requirements
+    scene.background = new THREE.Color(0x0f172a); 
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     cameraRef.current = camera;
