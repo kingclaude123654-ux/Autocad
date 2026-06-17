@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-// --- TYPES & INTERFACES ---
+// --- TYPE CONTEXT MATRIX ---
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
-export type ToolType = 'select' | 'pan' | 'move' | 'line' | 'polyline' | 'rectangle' | 'polygon' | 'circle';
+export type ToolType = 'select' | 'pan' | 'move' | 'copy' | 'line' | 'polyline' | 'rectangle' | 'polygon' | 'circle';
 
 export interface Point2D {
   x: number;
@@ -22,26 +22,26 @@ export interface CADObject {
 }
 
 export default function App() {
-  // --- APPLICATION STATES ---
+  // --- CORE ENGINE STATES ---
   const [objects, setObjects] = useState<CADObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('line');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('System Ready: Tap or click and drag to start drawing.');
+  const [isDarkMode] = useState<boolean>(true); // Locked dark mode canvas setup
+  const [hudFeedback, setHudFeedback] = useState<string>('System Active. Select tool to begin drafting.');
 
-  // Workspace Settings
+  // Workspace Configurations
   const [unit] = useState<string>('mm');
   const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
   const workspaceSize = 500;
   const gridSpacing = 10;
 
-  // History Stack
+  // Global Time-Travel History Management (Undo / Redo)
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // --- CORE THREE.JS & INTERACTION REFERENCES ---
+  // --- CORE THREE.JS PIPELINE REFERENCES ---
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -49,21 +49,22 @@ export default function App() {
   const visualObjectsRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const previewLineRef = useRef<THREE.Line | null>(null);
 
-  // Drawing Gesture Trackers
+  // Real-Time Interaction Trackers
   const isDrawingRef = useRef<boolean>(false);
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
   const chainAnchorRef = useRef<Point2D | null>(null);
   const moveStartPointRef = useRef<Point2D | null>(null);
   const polylinePointsRef = useRef<Point2D[]>([]);
+  const isCopyingRef = useRef<boolean>(false);
 
-  // Navigation Trackers
+  // Camera Matrix Navigation Metrics
   const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
   const cameraZoomRef = useRef<number>(1.2);
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Thread-Safe State Mirror to eliminate engine lag
+  // Thread-Safe Synchronization State Mirror
   const stateRef = useRef({
     currentTool,
     objects,
@@ -92,7 +93,7 @@ export default function App() {
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // --- CAMERA MATRIX COORDINATION ---
+  // --- ENGINE CAMERA CONTROLLER ---
   const syncCameraMatrix = (forcedMode?: ViewMode) => {
     if (!cameraRef.current) return;
     const activeMode = forcedMode || viewMode;
@@ -123,7 +124,30 @@ export default function App() {
     setObjects(nextState);
   };
 
-  // --- RAYCASTING WORKSPACE INTERSECTIONS ---
+  // --- TIME TRAVEL MODIFIERS (UNDO / REDO) ---
+  const executeUndo = () => {
+    if (historyIndex > 0) {
+      const nextIdx = historyIndex - 1;
+      setHistoryIndex(nextIdx);
+      setObjects(history[nextIdx]);
+      setHudFeedback("Undo operation completed.");
+    } else {
+      setHudFeedback("History bounds reached. Nothing to Undo.");
+    }
+  };
+
+  const executeRedo = () => {
+    if (historyIndex < history.length - 1) {
+      const nextIdx = historyIndex + 1;
+      setHistoryIndex(nextIdx);
+      setObjects(history[nextIdx]);
+      setHudFeedback("Redo operation completed.");
+    } else {
+      setHudFeedback("History bounds reached. Nothing to Redo.");
+    }
+  };
+
+  // --- WORKSPACE BOUNDS RAYCASTER ---
   const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
     if (!containerRef.current || !cameraRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
@@ -152,7 +176,7 @@ export default function App() {
     return null;
   };
 
-  // --- UNIFIED POINTER EVENT LISTENERS (Web & Mobile Touch) ---
+  // --- INTERACTION EVENT CONTROLLERS ---
   const handlePointerDown = (clientX: number, clientY: number, isRightClick = false) => {
     if (isRightClick || stateRef.current.currentTool === 'pan') {
       isPanningRef.current = true;
@@ -170,10 +194,11 @@ export default function App() {
       return;
     }
 
-    if (stateRef.current.currentTool === 'move') {
-      if (!stateRef.current.selectedId) return;
+    if (stateRef.current.currentTool === 'move' || stateRef.current.currentTool === 'copy') {
+      if (!stateRef.current.selectedId) return setHudFeedback("Action Rejected: Select an object first.");
       isDrawingRef.current = true;
       moveStartPointRef.current = pts;
+      isCopyingRef.current = stateRef.current.currentTool === 'copy';
       return;
     }
 
@@ -200,21 +225,26 @@ export default function App() {
       return;
     }
 
-    if (!isDrawingRef.current || !startPointRef.current) return;
+    if (!isDrawingRef.current || !startPointRef.current) {
+      // Allow move/copy modifications tracking even without structural draw origins
+      if (isDrawingRef.current && moveStartPointRef.current && stateRef.current.selectedId) {
+        const pts = get3DPoint(clientX, clientY);
+        if (!pts) return;
+        const dx = pts.x - moveStartPointRef.current.x; const dy = pts.y - moveStartPointRef.current.y;
+        moveStartPointRef.current = pts;
+
+        setObjects((prev) => prev.map((o) => o.id === stateRef.current.selectedId ? { ...o, points: o.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : o));
+      }
+      return;
+    }
+    
     let pts = get3DPoint(clientX, clientY);
     if (!pts) return;
 
-    if (stateRef.current.orthoMode && stateRef.current.currentTool !== 'move') {
+    if (stateRef.current.orthoMode && stateRef.current.currentTool !== 'move' && stateRef.current.currentTool !== 'copy') {
       const dx = Math.abs(pts.x - startPointRef.current.x);
       const dy = Math.abs(pts.y - startPointRef.current.y);
       pts = dx > dy ? { x: pts.x, y: startPointRef.current.y } : { x: startPointRef.current.x, y: pts.y };
-    }
-
-    if (stateRef.current.currentTool === 'move' && moveStartPointRef.current && stateRef.current.selectedId) {
-      const dx = pts.x - moveStartPointRef.current.x; const dy = pts.y - moveStartPointRef.current.y;
-      moveStartPointRef.current = pts;
-      setObjects((prev) => prev.map((o) => o.id === stateRef.current.selectedId ? { ...o, points: o.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : o));
-      return;
     }
 
     currentPointRef.current = pts;
@@ -228,6 +258,7 @@ export default function App() {
       } else if (stateRef.current.currentTool === 'rectangle') {
         pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
       } else if (stateRef.current.currentTool === 'polygon') {
+        // Uniform Triangle/Polygon Generator Engine
         for (let i = 0; i <= 3; i++) { const alpha = (i / 3) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
       } else if (stateRef.current.currentTool === 'circle') {
         for (let i = 0; i <= 64; i++) { const alpha = (i / 64) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
@@ -242,12 +273,29 @@ export default function App() {
     if (!isDrawingRef.current) return;
 
     isDrawingRef.current = false;
-    if (stateRef.current.currentTool === 'move') { moveStartPointRef.current = null; updateHistory(stateRef.current.objects); return; }
+    
+    // Process Move & Copy Execution Pipelines Distinctly
+    if ((stateRef.current.currentTool === 'move' || stateRef.current.currentTool === 'copy') && moveStartPointRef.current && stateRef.current.selectedId) {
+      moveStartPointRef.current = null;
+      if (isCopyingRef.current) {
+        const target = stateRef.current.objects.find(o => o.id === stateRef.current.selectedId);
+        if (target) {
+          const cloneObj = { ...target, id: generateId() };
+          updateHistory([...stateRef.current.objects, cloneObj]);
+          setHudFeedback("Element structural copy operation committed.");
+        }
+      } else {
+        updateHistory(stateRef.current.objects);
+        setHudFeedback("Element translation layout updated.");
+      }
+      isCopyingRef.current = false;
+      return;
+    }
+
     if (!startPointRef.current || !currentPointRef.current) return;
 
     const origin = startPointRef.current;
     const end = currentPointRef.current;
-
     const len = Math.round(Math.hypot(end.x - origin.x, end.y - origin.y));
     if (len < 1) return;
 
@@ -271,7 +319,7 @@ export default function App() {
     } else if (stateRef.current.currentTool === 'polygon') {
       const pts: Point2D[] = [];
       for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false };
+      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false, properties: { description: 'Triangle primitive' } };
     } else if (stateRef.current.currentTool === 'circle') {
       const pts: Point2D[] = [];
       for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
@@ -289,7 +337,27 @@ export default function App() {
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   };
 
-  // --- ENGINE WORKSPACE GENERATOR ---
+  // --- INTERACTION SYSTEM STORAGE ATTACHMENT PIPELINES ---
+  const executeNewFile = () => {
+    if (window.confirm("Are you sure you want to initialize a new canvas? Unsaved vectors will be lost.")) {
+      clearWorkspace();
+      setHistory([[]]);
+      setHistoryIndex(0);
+      setHudFeedback("Initialized clean working project workspace.");
+    }
+  };
+
+  const executeSaveAsFile = () => {
+    const dataString = JSON.stringify(objects, null, 2);
+    const blob = new Blob([dataString], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.download = `project_blueprint_${Date.now()}.json`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    setHudFeedback("Session file serialization downloaded safely.");
+  };
+
+  // --- INITIALIZE WEBGL GRAPHICS INTERACTION ENVIRONMENT ---
   useEffect(() => {
     if (!containerRef.current) return;
     const width = containerRef.current.clientWidth;
@@ -303,7 +371,7 @@ export default function App() {
     rendererRef.current = renderer;
 
     const scene = sceneRef.current;
-    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
+    scene.background = new THREE.Color(0x0f172a); // Rigid dark setup matching workspace requirements
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     cameraRef.current = camera;
@@ -316,7 +384,7 @@ export default function App() {
     scene.add(dl);
 
     const divisions = Math.round(workspaceSize / gridSpacing);
-    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, 0x334155);
     scene.add(grid);
 
     const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
@@ -327,12 +395,10 @@ export default function App() {
 
     const host = containerRef.current;
 
-    // Desktop Mouse Events
     const onMouseDown = (e: MouseEvent) => { e.preventDefault(); handlePointerDown(e.clientX, e.clientY, e.button === 2); };
     const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
     const onMouseUp = () => { handlePointerUp(); };
 
-    // Mobile Touch Events mapping directly to same vector tracking loops
     const onTouchStart = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerDown(e.touches[0].clientX, e.touches[0].clientY, false); } };
     const onTouchMove = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerMove(e.touches[0].clientX, e.touches[0].clientY); } };
     
@@ -344,27 +410,7 @@ export default function App() {
     host.addEventListener('touchmove', onTouchMove, { passive: true });
     host.addEventListener('touchend', onMouseUp, { passive: true });
 
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
-      syncCameraMatrix();
-    };
-    host.addEventListener('wheel', handleWheel, { passive: false });
-
-    const handleResize = () => {
-      if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-      rendererRef.current.render(sceneRef.current, cameraRef.current);
-    };
-    window.addEventListener('resize', handleResize);
-
     return () => {
-      window.removeEventListener('resize', handleResize);
-      host.removeEventListener('wheel', handleWheel);
       host.removeEventListener('mousedown', onMouseDown);
       host.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
@@ -373,11 +419,11 @@ export default function App() {
       host.removeEventListener('touchend', onMouseUp);
       renderer.dispose();
     };
-  }, [isDarkMode]);
+  }, []);
 
   useEffect(() => { syncCameraMatrix(); }, [viewMode]);
 
-  // --- GEOMETRY PIPELINE RENDER ENGINE ---
+  // --- GEOMETRY PROCESSING LAYER RENDERING ---
   useEffect(() => {
     if (!sceneRef.current) return;
     visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
@@ -440,7 +486,7 @@ export default function App() {
     }
   }, [objects, selectedId, unit]);
 
-  // --- TOOLBAR MODIFIER OPERATIONS ---
+  // --- TOP BAR OPERATIONS HANDLERS ---
   const executeExtrude = () => {
     if (!selectedId) return alert('Select an object first.');
     const input = prompt("Enter precise extrusion depth dimension:", "40");
@@ -449,83 +495,6 @@ export default function App() {
     updateHistory(objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o));
     setViewMode('isometric');
     setHudFeedback(`Extruded element to depth of ${depth}${unit}.`);
-  };
-
-  const executeTrim = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      newPoints[newPoints.length - 1] = { x: p1.x + (p2.x - p1.x) * 0.75, y: p1.y + (p2.y - p1.y) * 0.75 };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Trim operation calculated successfully.");
-  };
-
-  const executeExtend = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-      newPoints[newPoints.length - 1] = { x: p2.x + ((p2.x - p1.x) / d) * 20, y: p2.y + ((p2.y - p1.y) / d) * 20 };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Extended path vectors forward.");
-  };
-
-  const executeFillet = () => {
-    if (!selectedId) return alert('Select an object first.');
-    const target = objects.find(o => o.id === selectedId);
-    if (!target || target.points.length < 2) return;
-    const input = prompt("Enter Fillet Corner Radius:", "10");
-    if (!input) return;
-    const filletRad = parseFloat(input) || 10;
-
-    const fPts: Point2D[] = [];
-    const total = target.points.length;
-    for (let i = 0; i < total; i++) {
-      const p1 = target.points[i]; const p2 = target.points[(i + 1) % total];
-      fPts.push(p1);
-      if (target.type === 'line' && total === 2 && i === 1) break;
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const shift = Math.min(filletRad, d * 0.4);
-      if (d > 0) fPts.push({ x: p1.x + ((p2.x - p1.x) / d) * shift, y: p1.y + ((p2.y - p1.y) / d) * shift });
-    }
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
-    setHudFeedback("Applied fillet modifier.");
-  };
-
-  const executeRotate = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      const angle = Math.PI / 12; 
-      return { ...o, points: o.points.map(p => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) })) };
-    }));
-    setHudFeedback("Rotated geometry 15 degrees CCW.");
-  };
-
-  const executeScale = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      return { ...o, points: o.points.map(p => ({ x: p.x * 1.25, y: p.y * 1.25 })) };
-    }));
-    setHudFeedback("Scaled model footprint up 25%.");
-  };
-
-  const executeAreaOffset = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      return { ...o, points: o.points.map(p => ({ x: p.x + 10, y: p.y + 10 })) };
-    }));
-    setHudFeedback("Calculated uniform segment offset lines.");
   };
 
   const executeErase = () => {
@@ -541,53 +510,45 @@ export default function App() {
     polylinePointsRef.current = [];
     chainAnchorRef.current = null;
     updateHistory([]);
-    setHudFeedback("Workspace wiped clean.");
   };
 
   return (
-    <div className={`w-screen h-screen flex flex-col font-sans overflow-hidden select-none ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+    <div className="w-screen h-screen flex flex-col font-sans overflow-hidden select-none bg-slate-900 text-slate-100">
       
-      {/* HEADER CONTROLS */}
-      <header className={`h-12 px-4 flex items-center justify-between border-b shrink-0 z-10 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
+      {/* HEADER CONTROL ROW */}
+      <header className="h-12 px-4 flex items-center justify-between border-b shrink-0 z-10 bg-slate-950 border-slate-800">
         <div className="flex items-center gap-3">
-          <span className="text-sm md:text-base font-black tracking-wider text-indigo-500">ENGINE_CAD v3.0</span>
+          <span className="text-sm md:text-base font-black tracking-wider text-indigo-500">ENGINE_CAD PRO</span>
           <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">{unit.toUpperCase()}</span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+        <div className="flex items-center gap-2">
+          <button onClick={executeNewFile} className="px-2 py-1 bg-slate-800 rounded text-[10px] font-bold">NEW</button>
+          <button onClick={executeSaveAsFile} className="px-2 py-1 bg-emerald-600 rounded text-[10px] font-bold text-white">SAVE AS</button>
+          <button onClick={executeUndo} className="p-1 px-2 rounded bg-slate-800 text-[10px] font-bold">⤺ UNDO</button>
+          <button onClick={executeRedo} className="p-1 px-2 rounded bg-slate-800 text-[10px] font-bold">⤻ REDO</button>
+          <label className="flex items-center gap-1 text-[10px] font-semibold cursor-pointer ml-1">
             <input type="checkbox" checked={snapToGrid} onChange={(e) => setSnapToGrid(e.target.checked)} className="accent-indigo-500 rounded" />
             SNAP
           </label>
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+          <label className="flex items-center gap-1 text-[10px] font-semibold cursor-pointer">
             <input type="checkbox" checked={orthoMode} onChange={(e) => setOrthoMode(e.target.checked)} className="accent-indigo-500 rounded" />
             ORTHO
           </label>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-1 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-white">
-            {isDarkMode ? '🌞' : '🌙'}
-          </button>
-          <button onClick={clearWorkspace} className="px-2 py-1 bg-rose-600 text-white rounded text-[10px] font-bold">
-            RESET
-          </button>
         </div>
       </header>
 
-      {/* RESPONSIVE LAYOUT FRAME */}
+      {/* VIEWPORT CONTROLLER WORKSPACE FRAME */}
       <div className="flex-1 flex flex-col md:flex-row relative w-full h-full min-h-0 overflow-hidden">
         
-        {/* VIEWPORT CONTROLLER MAIN CONTAINER */}
-        <main 
-          ref={containerRef} 
-          className="flex-1 w-full min-h-[45vh] md:h-full relative overflow-hidden bg-transparent touch-none"
-          style={{ minWidth: '0' }}
-        />
+        <main ref={containerRef} className="flex-1 w-full min-h-[50vh] md:h-full relative overflow-hidden bg-transparent touch-none" style={{ minWidth: '0' }} />
 
-        {/* SIDE BAR BUTTON CONTROLS */}
-        <aside className={`w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
+        {/* COMPREHENSIVE RESPONSIVE CONTROL PANEL */}
+        <aside className="w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 bg-slate-950 border-slate-800">
           <div className="min-w-[160px] md:min-w-0">
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Draw Tools</h3>
             <div className="grid grid-cols-2 gap-1">
-              {(['select', 'pan', 'move', 'line', 'polyline', 'rectangle', 'polygon', 'circle'] as ToolType[]).map((tool) => (
+              {(['select', 'pan', 'move', 'copy', 'line', 'polyline', 'rectangle', 'polygon', 'circle'] as ToolType[]).map((tool) => (
                 <button
                   key={tool}
                   onClick={() => {
@@ -599,27 +560,19 @@ export default function App() {
                     setCurrentTool(tool);
                   }}
                   className={`py-1 px-2 text-left rounded capitalize text-[11px] font-bold border ${
-                    currentTool === tool 
-                      ? 'bg-indigo-600 border-indigo-500 text-white' 
-                      : isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                    currentTool === tool ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-300'
                   }`}
                 >
-                  {tool}
+                  {tool === 'polygon' ? 'Triangle (Poly)' : tool}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="min-w-[180px] md:min-w-0 flex flex-col gap-1 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-3 border-slate-800">
+          <div className="min-w-[120px] md:min-w-0 flex flex-col gap-1 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-3 border-slate-800">
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Modifiers</h3>
-            <div className="grid grid-cols-2 md:grid-cols-1 gap-1">
-              <button onClick={executeExtrude} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-emerald-600 text-white">⬔ Extrude</button>
-              <button onClick={executeTrim} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">✂ Trim</button>
-              <button onClick={executeExtend} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⤾ Extend</button>
-              <button onClick={executeFillet} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⌒ Fillet</button>
-              <button onClick={executeRotate} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⟳ Rotate</button>
-              <button onClick={executeScale} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⚖ Scale</button>
-              <button onClick={executeAreaOffset} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">☵ Offset</button>
+            <div className="grid grid-cols-1 gap-1">
+              <button onClick={executeExtrude} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-emerald-600 text-white">⬔ Extrude 3D</button>
               <button onClick={executeErase} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-rose-950/60 text-rose-400 border border-rose-950">🗑 Delete</button>
             </div>
           </div>
@@ -632,9 +585,7 @@ export default function App() {
                   key={m}
                   onClick={() => setViewMode(m)}
                   className={`py-1 px-1 text-center rounded capitalize text-[11px] font-bold border ${
-                    viewMode === m 
-                      ? 'bg-amber-600 border-amber-500 text-white' 
-                      : isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
+                    viewMode === m ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-400'
                   }`}
                 >
                   {m}
@@ -644,10 +595,8 @@ export default function App() {
           </div>
         </aside>
 
-        {/* FLOATING STATUS HUD TERMINAL */}
-        <footer className={`absolute bottom-36 md:bottom-3 left-4 right-4 px-4 py-2 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl z-10 ${
-          isDarkMode ? 'bg-slate-950/90 border-slate-800 text-emerald-400' : 'bg-white/90 border-slate-200 text-emerald-700'
-        }`}>
+        {/* HEADS UP DISPLAY TERMINAL STATUS */}
+        <footer className="absolute bottom-32 md:bottom-3 left-4 right-4 px-4 py-2 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl z-10 bg-slate-950/90 border-slate-800 text-emerald-400">
           <div className="flex items-center gap-2 font-mono text-[11px]">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>{hudFeedback}</span>
