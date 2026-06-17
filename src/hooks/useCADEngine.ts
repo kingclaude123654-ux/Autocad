@@ -1,3 +1,4 @@
+```typescript
 // src/hooks/useCADEngine.ts
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
@@ -90,9 +91,6 @@ export function useCADEngine() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
     controls.target.set(0, 0, 0);
-    controls.enablePan = true;
-    controls.enableZoom = true;
-    controls.enableRotate = true;
     controlsRef.current = controls;
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -198,12 +196,34 @@ export function useCADEngine() {
 
   const genId = useCallback((): string => 'o_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9), []);
 
+  const getMeshMaterial = (mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.Material | THREE.Material[] => {
+    if (mesh instanceof THREE.Mesh) return mesh.material;
+    if (mesh instanceof THREE.Line) return mesh.material;
+    if (mesh instanceof THREE.Group && mesh.children[0]) {
+      const c = mesh.children[0];
+      if (c instanceof THREE.Mesh) return c.material;
+      if (c instanceof THREE.Line) return c.material;
+    }
+    return new THREE.MeshStandardMaterial();
+  };
+
+  const getMeshGeometry = (mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.BufferGeometry => {
+    if (mesh instanceof THREE.Mesh) return mesh.geometry;
+    if (mesh instanceof THREE.Line) return mesh.geometry;
+    if (mesh instanceof THREE.Group && mesh.children[0]) {
+      const c = mesh.children[0];
+      if (c instanceof THREE.Mesh) return c.geometry;
+      if (c instanceof THREE.Line) return c.geometry;
+    }
+    return new THREE.BufferGeometry();
+  };
+
   const addObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): string => {
     const id = genId();
     const obj: CADObject = {
       id, mesh, type,
-      geometry: mesh instanceof THREE.Mesh ? mesh.geometry : (mesh as THREE.Line).geometry,
-      material: mesh.material,
+      geometry: getMeshGeometry(mesh),
+      material: getMeshMaterial(mesh),
       position: mesh.position.clone(),
       rotation: mesh.rotation.clone(),
       scale: mesh.scale.clone(),
@@ -221,55 +241,35 @@ export function useCADEngine() {
   const selectObject = useCallback((id: string | null): void => {
     setState((prev: CADEngineState): CADEngineState => {
       const prevObj = prev.selectedId ? prev.objects.find((o: CADObject): boolean => o.id === prev.selectedId) : null;
-      if (prevObj?.mesh instanceof THREE.Mesh) {
-        const m = prevObj.mesh.material;
-        if (m instanceof THREE.MeshStandardMaterial) { m.emissive?.set(0); m.emissiveIntensity = 0; }
-      }
-      if (prevObj?.mesh instanceof THREE.Line) {
-        const m = prevObj.mesh.material;
-        if (m instanceof THREE.LineBasicMaterial) m.color.set(0x00ff00);
+      if (prevObj) {
+        const mat = getMeshMaterial(prevObj.mesh);
+        if (mat instanceof THREE.MeshStandardMaterial) { mat.emissive?.set(0); mat.emissiveIntensity = 0; }
+        if (mat instanceof THREE.LineBasicMaterial) mat.color.set(0x00ff00);
       }
       const newObj = id ? prev.objects.find((o: CADObject): boolean => o.id === id) : null;
-      if (newObj?.mesh instanceof THREE.Mesh) {
-        const m = newObj.mesh.material;
-        if (m instanceof THREE.MeshStandardMaterial) { m.emissive?.set(0x444444); m.emissiveIntensity = 0.5; }
-      }
-      if (newObj?.mesh instanceof THREE.Line) {
-        const m = newObj.mesh.material;
-        if (m instanceof THREE.LineBasicMaterial) m.color.set(0xffff00);
+      if (newObj) {
+        const mat = getMeshMaterial(newObj.mesh);
+        if (mat instanceof THREE.MeshStandardMaterial) { mat.emissive?.set(0x444444); mat.emissiveIntensity = 0.5; }
+        if (mat instanceof THREE.LineBasicMaterial) mat.color.set(0xffff00);
       }
       return { ...prev, selectedId: id };
     });
   }, []);
 
-  // Lock camera - critical for view stability
   const lockView = useCallback((vm: ViewMode): void => {
     if (!cameraRef.current || !controlsRef.current) return;
     const cam = cameraRef.current;
     const ctrl = controlsRef.current;
     let pos: THREE.Vector3;
-    let up = new THREE.Vector3(0, 1, 0);
     switch (vm) {
-      case 'top': pos = new THREE.Vector3(0, 10, 0.001); up.set(0, 0, -1); break;
+      case 'top': pos = new THREE.Vector3(0, 10, 0.001); break;
       case 'front': pos = new THREE.Vector3(0, 0, 10); break;
       case 'side': pos = new THREE.Vector3(10, 0, 0); break;
       default: pos = new THREE.Vector3(7, 7, 7); break;
     }
     cam.position.copy(pos);
     ctrl.target.set(0, 0, 0);
-    ctrl.up.copy(up);
     ctrl.update();
-    // Disable controls temporarily to lock view
-    ctrl.enableRotate = false;
-    ctrl.enablePan = false;
-    ctrl.enableZoom = false;
-    setTimeout(() => {
-      if (controlsRef.current) {
-        controlsRef.current.enableRotate = true;
-        controlsRef.current.enablePan = true;
-        controlsRef.current.enableZoom = true;
-      }
-    }, 100);
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, viewMode: vm }));
   }, []);
 
@@ -294,7 +294,6 @@ export function useCADEngine() {
     });
   }, []);
 
-  // Get point on ground plane (Y=0) - all 2D drawing on this plane
   const getGroundPoint = useCallback((x: number, y: number): THREE.Vector3 | null => {
     if (!rendererRef.current || !cameraRef.current) return null;
     const rect = rendererRef.current.domElement.getBoundingClientRect();
@@ -332,46 +331,31 @@ export function useCADEngine() {
     return null;
   }, [state.objects]);
 
-  // TOUCH HANDLERS - 1 finger draw, 2 fingers camera
   const handleTouchStart = useCallback((e: TouchEvent): void => {
     e.preventDefault();
     const count = e.touches.length;
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, touchCount: count }));
-
-    // 2+ fingers = camera control only, don't draw
     if (count >= 2) return;
-
-    // 1 finger
     const t = e.touches[0];
     if (state.activeTool === 'select') {
       const id = pickObject(t.clientX, t.clientY);
       selectObject(id);
       return;
     }
-
-    // Drawing tools
     const pt = getGroundPoint(t.clientX, t.clientY);
     if (!pt) return;
     const sp = state.snapEnabled ? snap(pt) : pt;
-    setState((prev: CADEngineState): CADEngineState => ({
-      ...prev, isDrawing: true, drawingStartPoint: sp,
-    }));
+    setState((prev: CADEngineState): CADEngineState => ({ ...prev, isDrawing: true, drawingStartPoint: sp }));
   }, [state.activeTool, state.snapEnabled, pickObject, selectObject, getGroundPoint, snap]);
 
   const handleTouchMove = useCallback((e: TouchEvent): void => {
     e.preventDefault();
     const count = e.touches.length;
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, touchCount: count }));
-
-    // 2+ fingers = camera control
     if (count >= 2) {
-      if (state.isDrawing) {
-        clearPreview();
-        setState((prev: CADEngineState): CADEngineState => ({ ...prev, isDrawing: false, drawingStartPoint: null }));
-      }
+      if (state.isDrawing) { clearPreview(); setState((prev: CADEngineState): CADEngineState => ({ ...prev, isDrawing: false, drawingStartPoint: null })); }
       return;
     }
-
     if (!state.isDrawing || !state.drawingStartPoint) return;
     const t = e.touches[0];
     const pt = getGroundPoint(t.clientX, t.clientY);
@@ -379,9 +363,7 @@ export function useCADEngine() {
     const cp = state.snapEnabled ? snap(pt) : pt;
     clearPreview();
     const sp = state.drawingStartPoint;
-
     let preview: THREE.Mesh | THREE.Line | null = null;
-
     switch (state.activeTool) {
       case 'line': {
         const g = new THREE.BufferGeometry().setFromPoints([sp, cp]);
@@ -389,28 +371,21 @@ export function useCADEngine() {
         break;
       }
       case 'rectangle': {
-        const dx = cp.x - sp.x;
-        const dz = cp.z - sp.z;
+        const dx = cp.x - sp.x, dz = cp.z - sp.z;
         const shape = new THREE.Shape();
-        shape.moveTo(0, 0);
-        shape.lineTo(dx, 0);
-        shape.lineTo(dx, dz);
-        shape.lineTo(0, dz);
-        shape.closePath();
+        shape.moveTo(0, 0); shape.lineTo(dx, 0); shape.lineTo(dx, dz); shape.lineTo(0, dz); shape.closePath();
         const g = new THREE.ShapeGeometry(shape);
-        const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffff00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
-        mesh.position.copy(sp);
-        mesh.rotation.x = -Math.PI / 2;
-        preview = mesh;
+        const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffff00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
+        m.position.copy(sp); m.rotation.x = -Math.PI / 2;
+        preview = m;
         break;
       }
       case 'circle': {
         const r = sp.distanceTo(cp);
         const g = new THREE.CircleGeometry(r, 48);
-        const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffff00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
-        mesh.position.copy(sp);
-        mesh.rotation.x = -Math.PI / 2;
-        preview = mesh;
+        const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xffff00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
+        m.position.copy(sp); m.rotation.x = -Math.PI / 2;
+        preview = m;
         break;
       }
       case 'polyline': {
@@ -419,7 +394,6 @@ export function useCADEngine() {
         break;
       }
     }
-
     if (preview) sceneRef.current?.add(preview);
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, previewMesh: preview }));
   }, [state.isDrawing, state.drawingStartPoint, state.activeTool, state.snapEnabled, getGroundPoint, snap, clearPreview]);
@@ -428,90 +402,63 @@ export function useCADEngine() {
     e.preventDefault();
     const count = e.touches.length;
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, touchCount: count }));
-
     if (!state.isDrawing || !state.drawingStartPoint) return;
     clearPreview();
-
-    // Get last known point from touch move or use start
     const sp = state.drawingStartPoint;
-    // We need the end point - use raycaster with last touch position
     let cp = sp.clone();
     if (e.changedTouches.length > 0) {
       const t = e.changedTouches[0];
       const pt = getGroundPoint(t.clientX, t.clientY);
       if (pt) cp = state.snapEnabled ? snap(pt) : pt;
     }
-
     const minDist = 0.1;
     if (sp.distanceTo(cp) < minDist) {
       setState((prev: CADEngineState): CADEngineState => ({ ...prev, isDrawing: false, drawingStartPoint: null }));
       return;
     }
-
     switch (state.activeTool) {
-      case 'line': {
-        const g = new THREE.BufferGeometry().setFromPoints([sp, cp]);
-        addObject(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x00ff00 })), 'line');
+      case 'line':
+        addObject(new THREE.Line(new THREE.BufferGeometry().setFromPoints([sp, cp]), new THREE.LineBasicMaterial({ color: 0x00ff00 })), 'line');
         break;
-      }
       case 'rectangle': {
-        const dx = cp.x - sp.x;
-        const dz = cp.z - sp.z;
+        const dx = cp.x - sp.x, dz = cp.z - sp.z;
         const shape = new THREE.Shape();
-        shape.moveTo(0, 0);
-        shape.lineTo(dx, 0);
-        shape.lineTo(dx, dz);
-        shape.lineTo(0, dz);
-        shape.closePath();
-        const g = new THREE.ShapeGeometry(shape);
-        const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x4a90e2, side: THREE.DoubleSide }));
-        mesh.position.copy(sp);
-        mesh.rotation.x = -Math.PI / 2;
-        addObject(mesh, 'rectangle');
+        shape.moveTo(0, 0); shape.lineTo(dx, 0); shape.lineTo(dx, dz); shape.lineTo(0, dz); shape.closePath();
+        const m = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshStandardMaterial({ color: 0x4a90e2, side: THREE.DoubleSide }));
+        m.position.copy(sp); m.rotation.x = -Math.PI / 2;
+        addObject(m, 'rectangle');
         break;
       }
       case 'circle': {
         const r = sp.distanceTo(cp);
-        const g = new THREE.CircleGeometry(r, 48);
-        const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xe24a4a, side: THREE.DoubleSide }));
-        mesh.position.copy(sp);
-        mesh.rotation.x = -Math.PI / 2;
-        addObject(mesh, 'circle');
+        const m = new THREE.Mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshStandardMaterial({ color: 0xe24a4a, side: THREE.DoubleSide }));
+        m.position.copy(sp); m.rotation.x = -Math.PI / 2;
+        addObject(m, 'circle');
         break;
       }
-      case 'polyline': {
-        const g = new THREE.BufferGeometry().setFromPoints([sp, cp]);
-        addObject(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x00ff00 })), 'polyline');
+      case 'polyline':
+        addObject(new THREE.Line(new THREE.BufferGeometry().setFromPoints([sp, cp]), new THREE.LineBasicMaterial({ color: 0x00ff00 })), 'polyline');
         break;
-      }
     }
-
     setState((prev: CADEngineState): CADEngineState => ({ ...prev, isDrawing: false, drawingStartPoint: null }));
   }, [state.isDrawing, state.drawingStartPoint, state.activeTool, state.snapEnabled, clearPreview, getGroundPoint, snap, addObject]);
 
-  // Extrude - makes 2D flat shape into 3D
   const executeExtrude = useCallback((id: string, dist: number): void => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === id);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
-
       const oldGeom = obj.mesh.geometry;
       obj.mesh.removeFromParent();
-
       const extSettings: THREE.ExtrudeGeometryOptions = { steps: 1, depth: dist, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2 };
       const shape = new THREE.Shape();
       const attr = oldGeom.getAttribute('position');
-      
       if (attr.count > 2) {
         const pts: THREE.Vector2[] = [];
         for (let i = 0; i < attr.count; i++) pts.push(new THREE.Vector2(attr.getX(i), attr.getY(i)));
         shape.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i].x, pts[i].y);
         shape.closePath();
-      } else {
-        shape.moveTo(-1, -1); shape.lineTo(1, -1); shape.lineTo(1, 1); shape.lineTo(-1, 1); shape.closePath();
-      }
-
+      } else { shape.moveTo(-1, -1); shape.lineTo(1, -1); shape.lineTo(1, 1); shape.lineTo(-1, 1); shape.closePath(); }
       const newGeom = new THREE.ExtrudeGeometry(shape, extSettings);
       oldGeom.dispose();
       obj.mesh.geometry = newGeom;
@@ -520,7 +467,6 @@ export function useCADEngine() {
       obj.geometry = newGeom;
       obj.position.copy(obj.mesh.position);
       obj.rotation.copy(obj.mesh.rotation);
-
       sceneRef.current?.add(obj.mesh);
       saveHistory(prev.objects, prev.selectedId);
       return { ...prev };
@@ -531,7 +477,6 @@ export function useCADEngine() {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === id);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
-
       obj.mesh.removeFromParent();
       const shape = new THREE.Shape();
       const w = 2, h = 2, r = Math.min(radius, w / 2, h / 2);
@@ -540,11 +485,9 @@ export function useCADEngine() {
       shape.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2); shape.lineTo(-w / 2 + r, h / 2);
       shape.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r); shape.lineTo(-w / 2, -h / 2 + r);
       shape.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
-
       obj.mesh.geometry.dispose();
       obj.mesh.geometry = new THREE.ShapeGeometry(shape);
       obj.geometry = obj.mesh.geometry;
-
       sceneRef.current?.add(obj.mesh);
       saveHistory(prev.objects, prev.selectedId);
       return { ...prev };
@@ -607,15 +550,8 @@ export function useCADEngine() {
 
   const exportScene = useCallback((): string => {
     return JSON.stringify({
-      objects: state.objects.map((o: CADObject) => ({
-        id: o.id, type: o.type,
-        position: o.position.toArray(),
-        rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
-        scale: o.scale.toArray(),
-        createdAt: o.createdAt,
-      })),
-      viewMode: state.viewMode,
-      orthoMode: state.orthoMode,
+      objects: state.objects.map((o: CADObject) => ({ id: o.id, type: o.type, position: o.position.toArray(), rotation: [o.rotation.x, o.rotation.y, o.rotation.z], scale: o.scale.toArray(), createdAt: o.createdAt })),
+      viewMode: state.viewMode, orthoMode: state.orthoMode,
     });
   }, [state.objects, state.viewMode, state.orthoMode]);
 
@@ -637,12 +573,7 @@ export function useCADEngine() {
           }
           mesh.position.copy(pos); mesh.rotation.copy(rot); mesh.scale.copy(scl);
           sceneRef.current?.add(mesh);
-          newObjs.push({
-            id: od.id || genId(), mesh, type: od.type as ToolType,
-            geometry: mesh.geometry, material: mesh.material,
-            position: pos, rotation: rot, scale: scl,
-            createdAt: od.createdAt || Date.now(),
-          });
+          newObjs.push({ id: od.id || genId(), mesh, type: od.type as ToolType, geometry: mesh instanceof THREE.Mesh ? mesh.geometry : (mesh as THREE.Line).geometry, material: mesh.material, position: pos, rotation: rot, scale: scl, createdAt: od.createdAt || Date.now() });
         });
       }
       setState((prev: CADEngineState): CADEngineState => ({ ...prev, objects: newObjs, selectedId: null }));
@@ -650,39 +581,39 @@ export function useCADEngine() {
     } catch (e) { console.error('Import failed:', e); }
   }, [state.objects, disposeObject, genId, lockView]);
 
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(animFrameRef.current);
-      rendererRef.current?.dispose();
-      rendererRef.current?.domElement.remove();
-    };
-  }, []);
+  useEffect(() => { return () => { cancelAnimationFrame(animFrameRef.current); rendererRef.current?.dispose(); rendererRef.current?.domElement.remove(); }; }, []);
 
-  return {
-    state,
-    initScene,
-    undo,
-    redo,
-    setActiveTool: (t: ToolType) => setState((prev: CADEngineState): CADEngineState => ({ ...prev, activeTool: t, isDrawing: false, drawingStartPoint: null })),
-    selectObject,
-    lockView,
-    toggleOrthoMode: toggleOrtho,
-    setSnapEnabled: (e: boolean) => setState((prev: CADEngineState): CADEngineState => ({ ...prev, snapEnabled: e })),
-    setGridVisible: (v: boolean) => {
-      if (gridHelperRef.current) gridHelperRef.current.visible = v;
-      setState((prev: CADEngineState): CADEngineState => ({ ...prev, gridVisible: v }));
-    },
-    executeExtrude,
-    executeFillet,
-    executeRotate,
-    executeScale,
-    executeErase,
-    handleTouchStart,
-    handleTouchMove,
-    handleTouchEnd,
-    handleResize,
-    exportScene,
-    importScene,
-    addObject,
-  };
+  return { state, initScene, undo, redo, setActiveTool: (t: ToolType) => setState((prev: CADEngineState): CADEngineState => ({ ...prev, activeTool: t, isDrawing: false, drawingStartPoint: null })), selectObject, lockView, toggleOrthoMode: toggleOrtho, setSnapEnabled: (e: boolean) => setState((prev: CADEngineState): CADEngineState => ({ ...prev, snapEnabled: e })), setGridVisible: (v: boolean) => { if (gridHelperRef.current) gridHelperRef.current.visible = v; setState((prev: CADEngineState): CADEngineState => ({ ...prev, gridVisible: v })); }, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene, addObject };
 }
+```
+
+```typescript
+// src/App.tsx
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { useCADEngine } from './hooks/useCADEngine';
+
+const S = {
+  app: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', backgroundColor: '#1a1a2e', color: '#fff', fontFamily: 'sans-serif', overflow: 'hidden', userSelect: 'none', touchAction: 'none' } as React.CSSProperties,
+  canvas: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#1a1a2e', touchAction: 'none' } as React.CSSProperties,
+  bar: { display: 'flex', overflowX: 'auto', padding: '6px 8px', backgroundColor: '#16213e', borderBottom: '1px solid #0f3460', gap: 4, minHeight: 40, alignItems: 'center', flexWrap: 'nowrap' } as React.CSSProperties,
+  bbar: { display: 'flex', overflowX: 'auto', padding: '6px 8px', backgroundColor: '#16213e', borderTop: '1px solid #0f3460', gap: 4, minHeight: 44, alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
+  status: { display: 'flex', justifyContent: 'space-between', padding: '3px 8px', backgroundColor: '#0f3460', fontSize: 10, color: '#aaa', minHeight: 22, alignItems: 'center' } as React.CSSProperties,
+};
+
+const B = (a: boolean): React.CSSProperties => ({ padding: '6px 10px', backgroundColor: a ? '#e94560' : '#0f3460', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: a ? 'bold' : 'normal', whiteSpace: 'nowrap', minWidth: 40, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' });
+const SB: React.CSSProperties = { ...B(false), fontSize: 10, padding: '4px 8px', minHeight: 32 };
+const TB = (a: boolean): React.CSSProperties => ({ ...B(a), borderRadius: 20 });
+const AB: React.CSSProperties = { ...B(false), fontSize: 11, padding: '8px 12px', minHeight: 40 };
+const Sep: React.CSSProperties = { width: 1, height: 24, backgroundColor: '#0f3460', margin: '0 2px' };
+
+const App: React.FC = () => {
+  const ref = useRef<HTMLDivElement>(null);
+  const finp = useRef<HTMLInputElement>(null);
+  const e = useCADEngine();
+  const { state, initScene, undo, redo, lockView, toggleOrthoMode, setSnapEnabled, setGridVisible, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene } = e;
+  const [ui, setUi] = useState(true);
+
+  useEffect(() => { if (ref.current) initScene(ref.current); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, [initScene, handleResize]);
+  useEffect(() => { const c = ref.current; if (!c) return; c.addEventListener('touchstart', handleTouchStart, { passive: false }); c.addEventListener('touchmove', handleTouchMove, { passive: false }); c.addEventListener('touchend', handleTouchEnd, { passive: false }); return () => { c.removeEventListener('touchstart', handleTouchStart); c.removeEventListener('touchmove', handleTouchMove); c.removeEventListener('touchend', handleTouchEnd); }; }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
+
+ 
