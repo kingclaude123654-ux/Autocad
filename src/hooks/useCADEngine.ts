@@ -1,8 +1,3 @@
-Let me create completely fresh, properly formatted files. I'll write them character by character to ensure no truncation.
-
-src/hooks/useCADEngine.ts:
-
-```typescript
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -73,29 +68,36 @@ export function useCADEngine() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a2e);
     sceneRef.current = scene;
+
     const w = container.clientWidth;
     const h = container.clientHeight;
+
     const camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
     camera.position.set(8, 8, 8);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
+
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
+
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const dl = new THREE.DirectionalLight(0xffffff, 0.9);
     dl.position.set(5, 10, 5);
     scene.add(dl);
+
     const grid = new THREE.GridHelper(20, 20, 0x555555, 0x333333);
     scene.add(grid);
     gridHelperRef.current = grid;
     scene.add(new THREE.AxesHelper(5));
+
     let last = 0;
     const loop = (t: number): void => {
       animFrameRef.current = requestAnimationFrame(loop);
@@ -195,7 +197,7 @@ export function useCADEngine() {
   }, []);
 
   const genId = useCallback((): string => {
-    return 'o_' + Date.now().toString() + '_' + Math.random().toString(36).slice(2, 9);
+    return 'o' + Date.now() + Math.random().toString(36).slice(2, 9);
   }, []);
 
   const getMeshMaterial = (mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.Material | THREE.Material[] => {
@@ -213,7 +215,9 @@ export function useCADEngine() {
   const addObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): string => {
     const id = genId();
     const obj: CADObject = {
-      id, mesh, type,
+      id,
+      mesh,
+      type,
       geometry: getMeshGeometry(mesh),
       material: getMeshMaterial(mesh),
       position: mesh.position.clone(),
@@ -457,14 +461,6 @@ export function useCADEngine() {
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
       const oldGeom = obj.mesh.geometry;
       obj.mesh.removeFromParent();
-      const extSettings: THREE.ExtrudeGeometryOptions = {
-        steps: 1,
-        depth: dist,
-        bevelEnabled: true,
-        bevelThickness: 0.05,
-        bevelSize: 0.05,
-        bevelSegments: 2,
-      };
       const shape = new THREE.Shape();
       const attr = oldGeom.getAttribute('position');
       if (attr.count > 2) {
@@ -484,7 +480,14 @@ export function useCADEngine() {
         shape.lineTo(-1, 1);
         shape.closePath();
       }
-      const newGeom = new THREE.ExtrudeGeometry(shape, extSettings);
+      const newGeom = new THREE.ExtrudeGeometry(shape, {
+        steps: 1,
+        depth: dist,
+        bevelEnabled: true,
+        bevelThickness: 0.05,
+        bevelSize: 0.05,
+        bevelSegments: 2,
+      });
       oldGeom.dispose();
       obj.mesh.geometry = newGeom;
       obj.mesh.rotation.set(0, 0, 0);
@@ -610,7 +613,7 @@ export function useCADEngine() {
           if (od.type === 'line' || od.type === 'polyline') {
             mesh = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x00ff00 }));
           } else {
-            mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshStandardMaterial({ color: od.type === 'circle' ? 0xe24a4a : 0x4a90e2, side: THREE.DoubleSide }));
+            mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshStandardMaterial({ color: 0x4a90e2, side: THREE.DoubleSide }));
           }
           mesh.position.copy(pos);
           mesh.rotation.copy(rot);
@@ -672,56 +675,3 @@ export function useCADEngine() {
     addObject,
   };
 }
-```
-
-src/App.tsx:
-
-```typescript
-import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { useCADEngine } from './hooks/useCADEngine';
-
-const S = {
-  app: { display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', backgroundColor: '#1a1a2e', color: '#fff', fontFamily: 'sans-serif', overflow: 'hidden', userSelect: 'none', touchAction: 'none' } as React.CSSProperties,
-  canvas: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: '#1a1a2e', touchAction: 'none' } as React.CSSProperties,
-  bar: { display: 'flex', overflowX: 'auto', padding: '6px 8px', backgroundColor: '#16213e', borderBottom: '1px solid #0f3460', gap: 4, minHeight: 40, alignItems: 'center', flexWrap: 'nowrap' } as React.CSSProperties,
-  bbar: { display: 'flex', overflowX: 'auto', padding: '6px 8px', backgroundColor: '#16213e', borderTop: '1px solid #0f3460', gap: 4, minHeight: 44, alignItems: 'center', justifyContent: 'center' } as React.CSSProperties,
-  status: { display: 'flex', justifyContent: 'space-between', padding: '3px 8px', backgroundColor: '#0f3460', fontSize: 10, color: '#aaa', minHeight: 22, alignItems: 'center' } as React.CSSProperties,
-};
-
-const B = (a: boolean): React.CSSProperties => ({ padding: '6px 10px', backgroundColor: a ? '#e94560' : '#0f3460', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: a ? 'bold' : 'normal', whiteSpace: 'nowrap', minWidth: 40, minHeight: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' });
-const SB: React.CSSProperties = { ...B(false), fontSize: 10, padding: '4px 8px', minHeight: 32 };
-const TB = (a: boolean): React.CSSProperties => ({ ...B(a), borderRadius: 20 });
-const AB: React.CSSProperties = { ...B(false), fontSize: 11, padding: '8px 12px', minHeight: 40 };
-const Sep: React.CSSProperties = { width: 1, height: 24, backgroundColor: '#0f3460', margin: '0 2px' };
-
-const App: React.FC = () => {
-  const ref = useRef<HTMLDivElement>(null);
-  const finp = useRef<HTMLInputElement>(null);
-  const e = useCADEngine();
-  const { state, initScene, undo, redo, lockView, toggleOrthoMode, setSnapEnabled, setGridVisible, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene } = e;
-  const [ui, setUi] = useState(true);
-
-  useEffect(() => {
-    if (ref.current) initScene(ref.current);
-    window.addEventListener('resize', handleResize);
-    return () => { window.removeEventListener('resize', handleResize); };
-  }, [initScene, handleResize]);
-
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    c.addEventListener('touchstart', handleTouchStart, { passive: false });
-    c.addEventListener('touchmove', handleTouchMove, { passive: false });
-    c.addEventListener('touchend', handleTouchEnd, { passive: false });
-    return () => {
-      c.removeEventListener('touchstart', handleTouchStart);
-      c.removeEventListener('touchmove', handleTouchMove);
-      c.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
-
-  const save = useCallback(() => {
-    const j = exportScene();
-    const b = new Blob([j], { type: 'application/json' });
-    const u = URL.createObjectURL(b);
-    const a = document.createElement
