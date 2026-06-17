@@ -35,7 +35,6 @@ export default function App() {
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
   const workspaceSize = 500;
   const gridSpacing = 10;
-  const isDarkMode = true; // Hardcoded configuration variable to pass strict TS compilation bounds
 
   // Global Time-Travel History Management (Undo / Redo)
   const [history, setHistory] = useState<CADObject[][]>([[]]);
@@ -334,7 +333,6 @@ export default function App() {
     if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
   };
 
-  // --- INTERACTION SYSTEM STORAGE ATTACHMENT PIPELINES ---
   const executeNewFile = () => {
     if (window.confirm("Are you sure you want to initialize a new canvas? Unsaved vectors will be lost.")) {
       clearWorkspace();
@@ -354,13 +352,13 @@ export default function App() {
     setHudFeedback("Session file serialization downloaded safely.");
   };
 
-  // --- INITIALIZE WEBGL GRAPHICS INTERACTION ENVIRONMENT ---
   useEffect(() => {
     if (!containerRef.current) return;
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    
+    const width = containerRef.current.clientWidth || window.innerWidth;
+    const height = containerRef.current.clientHeight || (window.innerHeight - 48);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     containerRef.current.innerHTML = '';
@@ -392,35 +390,43 @@ export default function App() {
 
     const host = containerRef.current;
 
-    const onMouseDown = (e: MouseEvent) => { e.preventDefault(); handlePointerDown(e.clientX, e.clientY, e.button === 2); };
-    const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
-    const onMouseUp = () => { handlePointerUp(); };
+    // UNIFIED POINTER ENGINE LISTENERS (Bypasses mobile webview click limits)
+    const onPointerDown = (e: PointerEvent) => { 
+      if (e.pointerType === 'mouse' && e.button === 2) {
+        handlePointerDown(e.clientX, e.clientY, true);
+      } else {
+        handlePointerDown(e.clientX, e.clientY, false);
+      }
+    };
+    const onPointerMove = (e: PointerEvent) => { handlePointerMove(e.clientX, e.clientY); };
+    const onPointerUp = () => { handlePointerUp(); };
 
-    const onTouchStart = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerDown(e.touches[0].clientX, e.touches[0].clientY, false); } };
-    const onTouchMove = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerMove(e.touches[0].clientX, e.touches[0].clientY); } };
-    
-    host.addEventListener('mousedown', onMouseDown);
-    host.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    host.addEventListener('pointerdown', onPointerDown);
+    host.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
 
-    host.addEventListener('touchstart', onTouchStart, { passive: true });
-    host.addEventListener('touchmove', onTouchMove, { passive: true });
-    host.addEventListener('touchend', onMouseUp, { passive: true });
+    const handleResize = () => {
+      if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
+      const w = containerRef.current.clientWidth;
+      const h = containerRef.current.clientHeight;
+      cameraRef.current.aspect = w / h;
+      cameraRef.current.updateProjectionMatrix();
+      rendererRef.current.setSize(w, h);
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
+    };
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      host.removeEventListener('mousedown', onMouseDown);
-      host.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      host.removeEventListener('touchstart', onTouchStart);
-      host.removeEventListener('touchmove', onTouchMove);
-      host.removeEventListener('touchend', onMouseUp);
+      host.removeEventListener('pointerdown', onPointerDown);
+      host.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
   }, []);
 
   useEffect(() => { syncCameraMatrix(); }, [viewMode]);
 
-  // --- GEOMETRY PROCESSING LAYER RENDERING ---
   useEffect(() => {
     if (!sceneRef.current) return;
     visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
@@ -483,7 +489,6 @@ export default function App() {
     }
   }, [objects, selectedId, unit]);
 
-  // --- TOP BAR OPERATIONS HANDLERS ---
   const executeExtrude = () => {
     if (!selectedId) return alert('Select an object first.');
     const input = prompt("Enter precise extrusion depth dimension:", "40");
@@ -510,7 +515,7 @@ export default function App() {
   };
 
   return (
-    <div className="w-screen h-screen flex flex-col font-sans overflow-hidden select-none bg-slate-900 text-slate-100">
+    <div className="fixed inset-0 w-screen h-screen flex flex-col font-sans overflow-hidden select-none bg-slate-900 text-slate-100">
       
       {/* HEADER CONTROL ROW */}
       <header className="h-12 px-4 flex items-center justify-between border-b shrink-0 z-10 bg-slate-950 border-slate-800">
@@ -538,10 +543,11 @@ export default function App() {
       {/* VIEWPORT CONTROLLER WORKSPACE FRAME */}
       <div className="flex-1 flex flex-col md:flex-row relative w-full h-full min-h-0 overflow-hidden">
         
-        <main ref={containerRef} className="flex-1 w-full min-h-[50vh] md:h-full relative overflow-hidden bg-transparent touch-none" style={{ minWidth: '0' }} />
+        {/* Unified workspace layer */}
+        <main ref={containerRef} className="absolute inset-0 md:relative flex-1 w-full h-full min-h-0 bg-slate-900 touch-none z-0" style={{ minWidth: '0' }} />
 
         {/* COMPREHENSIVE RESPONSIVE CONTROL PANEL */}
-        <aside className="w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 bg-slate-950 border-slate-800">
+        <aside className="absolute bottom-14 left-0 right-0 md:relative md:bottom-auto md:left-auto md:right-auto w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 bg-slate-950/95 border-slate-800 backdrop-blur-sm">
           <div className="min-w-[160px] md:min-w-0">
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Draw Tools</h3>
             <div className="grid grid-cols-2 gap-1">
@@ -593,12 +599,12 @@ export default function App() {
         </aside>
 
         {/* HEADS UP DISPLAY TERMINAL STATUS */}
-        <footer className="absolute bottom-32 md:bottom-3 left-4 right-4 px-4 py-2 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl z-10 bg-slate-950/90 border-slate-800 text-emerald-400">
-          <div className="flex items-center gap-2 font-mono text-[11px]">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <footer className="absolute bottom-2 left-2 right-2 px-3 py-1.5 rounded border flex items-center justify-between backdrop-blur shadow-2xl z-10 bg-slate-950/95 border-slate-800 text-emerald-400">
+          <div className="flex items-center gap-2 font-mono text-[10px]">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             <span>{hudFeedback}</span>
           </div>
-          <div className="font-mono text-[10px] text-slate-500 flex gap-2">
+          <div className="font-mono text-[9px] text-slate-500 flex gap-2">
             <span>{currentTool.toUpperCase()}</span>
             <span>|</span>
             <span>ITEMS: {objects.length}</span>
