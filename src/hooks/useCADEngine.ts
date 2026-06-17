@@ -1,6 +1,3 @@
-I'll provide you with the complete source code for both files. These are production-ready implementations for a 3D CAD application.
-
-```typescript
 // useCADEngine.ts
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
@@ -39,6 +36,8 @@ export interface CADEngineState {
   mousePosition: THREE.Vector2;
   snapEnabled: boolean;
   gridVisible: boolean;
+  isDrawing: boolean;
+  drawingPoints: THREE.Vector3[];
 }
 
 export const useCADEngine = () => {
@@ -54,6 +53,8 @@ export const useCADEngine = () => {
     mousePosition: new THREE.Vector2(),
     snapEnabled: true,
     gridVisible: true,
+    isDrawing: false,
+    drawingPoints: [],
   });
 
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -62,11 +63,11 @@ export const useCADEngine = () => {
   const controlsRef = useRef<OrbitControls | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
-  const tempPointsRef = useRef<THREE.Vector3[]>([]);
   const tempLineRef = useRef<THREE.Line | null>(null);
   const animationFrameRef = useRef<number>(0);
+  const touchStartRef = useRef<{ x: number; y: number; time: number }>({ x: 0, y: 0, time: 0 });
 
-  // Initialize scene
+  // Initialize scene with mobile optimizations
   const initScene = useCallback((container: HTMLDivElement) => {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a2e);
@@ -76,63 +77,65 @@ export const useCADEngine = () => {
     const height = container.clientHeight;
     const aspect = width / height;
 
-    const camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
-    camera.position.set(10, 10, 10);
+    // Mobile-optimized camera
+    const camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+    camera.position.set(8, 8, 8);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
+    // Mobile-optimized renderer with performance settings
     const renderer = new THREE.WebGLRenderer({ 
-      antialias: true,
+      antialias: false, // Disabled for mobile performance
       preserveDrawingBuffer: true,
       alpha: true,
+      powerPreference: "high-performance",
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for mobile
+    renderer.shadowMap.enabled = false; // Disabled for mobile performance
     rendererRef.current = renderer;
 
     container.appendChild(renderer.domElement);
 
+    // Mobile-optimized controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
     controls.maxPolarAngle = Math.PI;
+    controls.minDistance = 2;
+    controls.maxDistance = 20;
+    controls.touches = {
+      ONE: THREE.TOUCH.ROTATE,
+      TWO: THREE.TOUCH.DOLLY_PAN,
+    };
     controlsRef.current = controls;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    // Simplified lighting for mobile
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(10, 20, 10);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
-    directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far = 50;
-    directionalLight.shadow.camera.left = -20;
-    directionalLight.shadow.camera.right = 20;
-    directionalLight.shadow.camera.top = 20;
-    directionalLight.shadow.camera.bottom = -20;
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    directionalLight.position.set(5, 10, 5);
     scene.add(directionalLight);
 
-    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.4);
-    scene.add(hemisphereLight);
-
-    // Grid
+    // Grid for reference
     const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
     scene.add(gridHelper);
     gridHelperRef.current = gridHelper;
 
-    // Axes helper
-    const axesHelper = new THREE.AxesHelper(5);
+    const axesHelper = new THREE.AxesHelper(3);
     scene.add(axesHelper);
 
-    // Animation loop
-    const animate = () => {
+    // Animation loop with mobile optimization
+    let lastTime = 0;
+    const animate = (time: number) => {
       animationFrameRef.current = requestAnimationFrame(animate);
+      
+      // Limit FPS on mobile for battery saving
+      const deltaTime = time - lastTime;
+      if (deltaTime < 32) return; // ~30 FPS cap for mobile
+      lastTime = time;
       
       if (controlsRef.current) {
         controlsRef.current.update();
@@ -142,10 +145,10 @@ export const useCADEngine = () => {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
     };
-    animate();
+    animate(0);
   }, []);
 
-  // Cleanup memory
+  // Cleanup memory - crucial for mobile
   const cleanupMemory = useCallback(() => {
     if (!sceneRef.current) return;
 
@@ -167,8 +170,6 @@ export const useCADEngine = () => {
                 if (material.displacementMap) material.displacementMap.dispose();
                 if (material.emissiveMap) material.emissiveMap.dispose();
                 if (material.bumpMap) material.bumpMap.dispose();
-                if (material.roughnessMap) material.roughnessMap.dispose();
-                if (material.metalnessMap) material.metalnessMap.dispose();
                 material.dispose();
               });
             } else {
@@ -181,8 +182,6 @@ export const useCADEngine = () => {
               if (child.material.displacementMap) child.material.displacementMap.dispose();
               if (child.material.emissiveMap) child.material.emissiveMap.dispose();
               if (child.material.bumpMap) child.material.bumpMap.dispose();
-              if (child.material.roughnessMap) child.material.roughnessMap.dispose();
-              if (child.material.metalnessMap) child.material.metalnessMap.dispose();
               child.material.dispose();
             }
           }
@@ -215,8 +214,6 @@ export const useCADEngine = () => {
       tempLineRef.current = null;
     }
 
-    tempPointsRef.current = [];
-
     if (gridHelperRef.current) {
       gridHelperRef.current.geometry.dispose();
       if (Array.isArray(gridHelperRef.current.material)) {
@@ -230,6 +227,8 @@ export const useCADEngine = () => {
       ...prev,
       objects: [],
       selectedId: null,
+      drawingPoints: [],
+      isDrawing: false,
     }));
   }, [state.objects]);
 
@@ -243,7 +242,7 @@ export const useCADEngine = () => {
         timestamp: Date.now(),
       });
 
-      if (newHistory.length > 50) {
+      if (newHistory.length > 30) { // Reduced history for mobile memory
         newHistory.shift();
       }
 
@@ -263,14 +262,12 @@ export const useCADEngine = () => {
       const newIndex = prev.historyIndex - 1;
       const historyItem = prev.history[newIndex];
 
-      // Remove existing objects from scene
       prev.objects.forEach(obj => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.remove(obj.mesh);
         }
       });
 
-      // Add historical objects to scene
       historyItem.objects.forEach(obj => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.add(obj.mesh);
@@ -294,14 +291,12 @@ export const useCADEngine = () => {
       const newIndex = prev.historyIndex + 1;
       const historyItem = prev.history[newIndex];
 
-      // Remove existing objects from scene
       prev.objects.forEach(obj => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.remove(obj.mesh);
         }
       });
 
-      // Add historical objects to scene
       historyItem.objects.forEach(obj => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.add(obj.mesh);
@@ -317,19 +312,21 @@ export const useCADEngine = () => {
     });
   }, []);
 
-  // Generate unique ID
   const generateId = useCallback(() => {
     return `obj_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }, []);
 
-  // Create CAD object
   const createCADObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): CADObject => {
     return {
       id: generateId(),
       mesh,
       type,
-      geometry: mesh instanceof THREE.Group ? mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).geometry : new THREE.BufferGeometry() : mesh.geometry,
-      material: mesh instanceof THREE.Group ? (mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).material : new THREE.MeshStandardMaterial()) : mesh.material,
+      geometry: mesh instanceof THREE.Group ? 
+        (mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).geometry : new THREE.BufferGeometry()) : 
+        mesh.geometry,
+      material: mesh instanceof THREE.Group ? 
+        (mesh.children[0] instanceof THREE.Mesh ? (mesh.children[0] as THREE.Mesh).material : new THREE.MeshStandardMaterial()) : 
+        mesh.material,
       position: mesh.position.clone(),
       rotation: mesh.rotation.clone(),
       scale: mesh.scale.clone(),
@@ -355,10 +352,9 @@ export const useCADEngine = () => {
     }
   }, [createCADObject, saveToHistory]);
 
-  // Select object
+  // Mobile-optimized object selection
   const selectObject = useCallback((id: string | null) => {
     setState(prev => {
-      // Deselect previous
       if (prev.selectedId) {
         const prevObj = prev.objects.find(o => o.id === prev.selectedId);
         if (prevObj && prevObj.mesh) {
@@ -367,16 +363,17 @@ export const useCADEngine = () => {
               prevObj.mesh.material.forEach(m => {
                 if (m instanceof THREE.MeshStandardMaterial) {
                   m.emissive.set(0x000000);
+                  m.emissiveIntensity = 0;
                 }
               });
             } else if (prevObj.mesh.material instanceof THREE.MeshStandardMaterial) {
               prevObj.mesh.material.emissive.set(0x000000);
+              prevObj.mesh.material.emissiveIntensity = 0;
             }
           }
         }
       }
 
-      // Select new
       if (id) {
         const newObj = prev.objects.find(o => o.id === id);
         if (newObj && newObj.mesh) {
@@ -385,10 +382,12 @@ export const useCADEngine = () => {
               newObj.mesh.material.forEach(m => {
                 if (m instanceof THREE.MeshStandardMaterial) {
                   m.emissive.set(0x444444);
+                  m.emissiveIntensity = 0.5;
                 }
               });
             } else if (newObj.mesh.material instanceof THREE.MeshStandardMaterial) {
               newObj.mesh.material.emissive.set(0x444444);
+              newObj.mesh.material.emissiveIntensity = 0.5;
             }
           }
         }
@@ -401,7 +400,7 @@ export const useCADEngine = () => {
     });
   }, []);
 
-  // Sync camera matrix for view switching
+  // Camera view synchronization
   const syncCameraMatrix = useCallback((viewMode: ViewMode) => {
     if (!cameraRef.current || !controlsRef.current) return;
 
@@ -413,20 +412,16 @@ export const useCADEngine = () => {
 
     switch (viewMode) {
       case 'top':
-        position.set(0, 10, 0);
-        target.set(0, 0, 0);
+        position.set(0, 8, 0);
         break;
       case 'front':
-        position.set(0, 0, 10);
-        target.set(0, 0, 0);
+        position.set(0, 0, 8);
         break;
       case 'side':
-        position.set(10, 0, 0);
-        target.set(0, 0, 0);
+        position.set(8, 0, 0);
         break;
       case 'isometric':
-        position.set(10, 10, 10);
-        target.set(0, 0, 0);
+        position.set(6, 6, 6);
         break;
     }
 
@@ -442,7 +437,7 @@ export const useCADEngine = () => {
 
   // Toggle orthographic mode
   const toggleOrthoMode = useCallback(() => {
-    if (!cameraRef.current || !sceneRef.current || !rendererRef.current) return;
+    if (!cameraRef.current || !rendererRef.current) return;
 
     const container = rendererRef.current.domElement.parentElement;
     if (!container) return;
@@ -455,7 +450,7 @@ export const useCADEngine = () => {
       const newOrthoMode = !prev.orthoMode;
       
       if (newOrthoMode) {
-        const frustumSize = 10;
+        const frustumSize = 8;
         const orthoCamera = new THREE.OrthographicCamera(
           frustumSize * aspect / -2,
           frustumSize * aspect / 2,
@@ -468,7 +463,7 @@ export const useCADEngine = () => {
         orthoCamera.rotation.copy(cameraRef.current!.rotation);
         cameraRef.current = orthoCamera;
       } else {
-        const perspectiveCamera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+        const perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
         perspectiveCamera.position.copy(cameraRef.current!.position);
         perspectiveCamera.rotation.copy(cameraRef.current!.rotation);
         cameraRef.current = perspectiveCamera;
@@ -485,10 +480,150 @@ export const useCADEngine = () => {
     });
   }, []);
 
+  // Mobile touch drawing handlers
+  const handleTouchStart = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    const touch = event.touches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+
+    if (state.activeTool === 'select') {
+      handleObjectSelection(touch.clientX, touch.clientY);
+    } else if (['line', 'polyline', 'rectangle', 'circle'].includes(state.activeTool)) {
+      const point = screenToWorld(touch.clientX, touch.clientY);
+      if (point) {
+        setState(prev => ({
+          ...prev,
+          isDrawing: true,
+          drawingPoints: [...prev.drawingPoints, point],
+        }));
+      }
+    }
+  }, [state.activeTool]);
+
+  const handleTouchMove = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    if (!state.isDrawing) return;
+
+    const touch = event.touches[0];
+    const point = screenToWorld(touch.clientX, touch.clientY);
+    
+    if (point && state.drawingPoints.length > 0) {
+      // Update preview line
+      if (tempLineRef.current && sceneRef.current) {
+        sceneRef.current.remove(tempLineRef.current);
+      }
+
+      const points = [...state.drawingPoints, point];
+      if (state.activeTool === 'line' && points.length >= 2) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 1 });
+        tempLineRef.current = new THREE.Line(geometry, material);
+        sceneRef.current?.add(tempLineRef.current);
+      }
+    }
+  }, [state.isDrawing, state.drawingPoints, state.activeTool]);
+
+  const handleTouchEnd = useCallback((event: TouchEvent) => {
+    event.preventDefault();
+    
+    if (state.isDrawing) {
+      const touchDuration = Date.now() - touchStartRef.current.time;
+      
+      // Double tap detection (for completing polyline)
+      if (touchDuration < 300 && state.drawingPoints.length > 1) {
+        if (state.activeTool === 'line' && state.drawingPoints.length >= 2) {
+          createLine(state.drawingPoints[0], state.drawingPoints[1]);
+        } else if (state.activeTool === 'polyline' && state.drawingPoints.length >= 3) {
+          createPolyline(state.drawingPoints);
+        }
+        
+        // Cleanup drawing state
+        if (tempLineRef.current && sceneRef.current) {
+          sceneRef.current.remove(tempLineRef.current);
+          tempLineRef.current = null;
+        }
+        
+        setState(prev => ({
+          ...prev,
+          isDrawing: false,
+          drawingPoints: [],
+        }));
+      }
+    }
+  }, [state.isDrawing, state.drawingPoints, state.activeTool]);
+
+  // Convert screen coordinates to world position
+  const screenToWorld = useCallback((x: number, y: number): THREE.Vector3 | null => {
+    if (!cameraRef.current || !rendererRef.current) return null;
+
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((x - rect.left) / rect.width) * 2 - 1,
+      -((y - rect.top) / rect.height) * 2 + 1
+    );
+
+    raycasterRef.current.setFromCamera(mouse, cameraRef.current);
+    
+    // Intersect with ground plane
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const intersection = new THREE.Vector3();
+    raycasterRef.current.ray.intersectPlane(plane, intersection);
+    
+    return intersection;
+  }, []);
+
+  // Mobile object selection via touch
+  const handleObjectSelection = useCallback((x: number, y: number) => {
+    if (!cameraRef.current || !sceneRef.current || !rendererRef.current) return;
+
+    const rect = rendererRef.current.domElement.getBoundingClientRect();
+    const mouse = new THREE.Vector2(
+      ((x - rect.left) / rect.width) * 2 - 1,
+      -((y - rect.top) / rect.height) * 2 + 1
+    );
+
+    raycasterRef.current.setFromCamera(mouse, cameraRef.current);
+    
+    const meshes: THREE.Object3D[] = [];
+    state.objects.forEach(obj => {
+      if (obj.mesh instanceof THREE.Mesh || obj.mesh instanceof THREE.Line) {
+        meshes.push(obj.mesh);
+      } else if (obj.mesh instanceof THREE.Group) {
+        obj.mesh.traverse(child => {
+          if (child instanceof THREE.Mesh) {
+            meshes.push(child);
+          }
+        });
+      }
+    });
+
+    const intersects = raycasterRef.current.intersectObjects(meshes, true);
+    
+    if (intersects.length > 0) {
+      let intersectedObject = intersects[0].object;
+      let foundId: string | null = null;
+
+      state.objects.forEach(obj => {
+        if (obj.mesh === intersectedObject || 
+            (obj.mesh instanceof THREE.Group && intersectedObject.parent === obj.mesh)) {
+          foundId = obj.id;
+        }
+      });
+
+      selectObject(foundId);
+    } else {
+      selectObject(null);
+    }
+  }, [state.objects, selectObject]);
+
   // Drawing tools
   const createLine = useCallback((start: THREE.Vector3, end: THREE.Vector3) => {
     const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
-    const material = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+    const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
     const line = new THREE.Line(geometry, material);
     addObject(line, 'line');
   }, [addObject]);
@@ -497,7 +632,7 @@ export const useCADEngine = () => {
     if (points.length < 2) return;
     
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+    const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
     const polyline = new THREE.Line(geometry, material);
     addObject(polyline, 'polyline');
   }, [addObject]);
@@ -514,28 +649,24 @@ export const useCADEngine = () => {
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x4a90e2, 
       side: THREE.DoubleSide,
-      roughness: 0.5,
-      metalness: 0.3,
+      roughness: 0.7,
+      metalness: 0.1,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(center);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     addObject(mesh, 'rectangle');
   }, [addObject]);
 
   const createCircle = useCallback((center: THREE.Vector3, radius: number) => {
-    const geometry = new THREE.CircleGeometry(radius, 64);
+    const geometry = new THREE.CircleGeometry(radius, 32); // Reduced segments for mobile
     const material = new THREE.MeshStandardMaterial({ 
       color: 0xe24a4a, 
       side: THREE.DoubleSide,
-      roughness: 0.5,
-      metalness: 0.3,
+      roughness: 0.7,
+      metalness: 0.1,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(center);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
     addObject(mesh, 'circle');
   }, [addObject]);
 
@@ -548,17 +679,12 @@ export const useCADEngine = () => {
       const shapeGeometry = obj.mesh.geometry;
       if (!(shapeGeometry instanceof THREE.BufferGeometry)) return prev;
 
-      // Create extruded geometry
       const extrudeSettings = {
         steps: 1,
         depth: distance,
-        bevelEnabled: true,
-        bevelThickness: 0.1,
-        bevelSize: 0.1,
-        bevelSegments: 2,
+        bevelEnabled: false, // Disabled for mobile performance
       };
 
-      // Convert shape to ShapeGeometry for extrusion
       const shape = new THREE.Shape();
       const positionAttribute = shapeGeometry.getAttribute('position');
       const points: THREE.Vector2[] = [];
@@ -580,15 +706,12 @@ export const useCADEngine = () => {
 
       const extrudeGeometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
       
-      // Replace geometry
       if (sceneRef.current) {
         sceneRef.current.remove(obj.mesh);
       }
       
       obj.mesh.geometry.dispose();
       obj.mesh.geometry = extrudeGeometry;
-      obj.mesh.castShadow = true;
-      obj.mesh.receiveShadow = true;
       
       if (sceneRef.current) {
         sceneRef.current.add(obj.mesh);
@@ -604,7 +727,6 @@ export const useCADEngine = () => {
       const obj = prev.objects.find(o => o.id === objectId);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
 
-      // Create a rounded rectangle as demonstration of fillet
       const shape = new THREE.Shape();
       const width = 2;
       const height = 2;
@@ -647,7 +769,6 @@ export const useCADEngine = () => {
           !(targetObj.mesh instanceof THREE.Mesh) || 
           !(cuttingObj.mesh instanceof THREE.Mesh)) return prev;
 
-      // Perform CSG-like trim operation using bounding boxes
       const targetBox = new THREE.Box3().setFromObject(targetObj.mesh);
       const cuttingBox = new THREE.Box3().setFromObject(cuttingObj.mesh);
       
@@ -655,7 +776,6 @@ export const useCADEngine = () => {
         const intersection = new THREE.Box3();
         intersection.copy(targetBox).intersect(cuttingBox);
         
-        // Remove intersection part from target
         const newGeometry = new THREE.BoxGeometry(
           targetBox.max.x - targetBox.min.x - (intersection.max.x - intersection.min.x),
           targetBox.max.y - targetBox.min.y - (intersection.max.y - intersection.min.y),
@@ -775,7 +895,6 @@ export const useCADEngine = () => {
       const objects = prev.objects.filter(o => objectIds.includes(o.id));
       if (objects.length < 2) return prev;
 
-      // Create a group to represent union
       const group = new THREE.Group();
       
       objects.forEach(obj => {
@@ -808,7 +927,6 @@ export const useCADEngine = () => {
       
       if (!targetObj || !subtractObj) return prev;
 
-      // Remove subtract object
       if (sceneRef.current) {
         sceneRef.current.remove(subtractObj.mesh);
       }
@@ -859,52 +977,7 @@ export const useCADEngine = () => {
     });
   }, [saveToHistory]);
 
-  // Mouse handlers for selection
-  const handleCanvasClick = useCallback((event: MouseEvent) => {
-    if (!cameraRef.current || !sceneRef.current || !rendererRef.current) return;
-
-    const rect = rendererRef.current.domElement.getBoundingClientRect();
-    const mouse = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
-
-    raycasterRef.current.setFromCamera(mouse, cameraRef.current);
-    
-    const meshes: THREE.Object3D[] = [];
-    state.objects.forEach(obj => {
-      if (obj.mesh instanceof THREE.Mesh || obj.mesh instanceof THREE.Line) {
-        meshes.push(obj.mesh);
-      } else if (obj.mesh instanceof THREE.Group) {
-        obj.mesh.traverse(child => {
-          if (child instanceof THREE.Mesh) {
-            meshes.push(child);
-          }
-        });
-      }
-    });
-
-    const intersects = raycasterRef.current.intersectObjects(meshes, true);
-    
-    if (intersects.length > 0) {
-      let intersectedObject = intersects[0].object;
-      let foundId: string | null = null;
-
-      // Find the top-level CAD object
-      state.objects.forEach(obj => {
-        if (obj.mesh === intersectedObject || 
-            (obj.mesh instanceof THREE.Group && intersectedObject.parent === obj.mesh)) {
-          foundId = obj.id;
-        }
-      });
-
-      selectObject(foundId);
-    } else {
-      selectObject(null);
-    }
-  }, [state.objects, selectObject]);
-
-  // Resize handler
+  // Resize handler for mobile
   const handleResize = useCallback(() => {
     if (!cameraRef.current || !rendererRef.current) return;
 
@@ -919,7 +992,7 @@ export const useCADEngine = () => {
       cameraRef.current.updateProjectionMatrix();
     } else if (cameraRef.current instanceof THREE.OrthographicCamera) {
       const aspect = width / height;
-      const frustumSize = 10;
+      const frustumSize = 8;
       cameraRef.current.left = frustumSize * aspect / -2;
       cameraRef.current.right = frustumSize * aspect / 2;
       cameraRef.current.top = frustumSize / 2;
@@ -930,11 +1003,12 @@ export const useCADEngine = () => {
     rendererRef.current.setSize(width, height);
   }, []);
 
-  // Set active tool
   const setActiveTool = useCallback((tool: ToolType) => {
     setState(prev => ({
       ...prev,
       activeTool: tool,
+      isDrawing: false,
+      drawingPoints: [],
     }));
   }, []);
 
@@ -981,71 +1055,10 @@ export const useCADEngine = () => {
     executeUnion,
     executeSubtract,
     executeErase,
-    handleCanvasClick,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
     handleResize,
     addObject,
   };
 };
-```
-
-```tsx
-// App.tsx
-import React, { useEffect, useRef, useCallback } from 'react';
-import { useCADEngine } from './useCADEngine';
-import * as THREE from 'three';
-
-const App: React.FC = () => {
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const {
-    state,
-    initScene,
-    undo,
-    redo,
-    setActiveTool,
-    syncCameraMatrix,
-    toggleOrthoMode,
-    createLine,
-    createPolyline,
-    createRectangle,
-    createCircle,
-    executeExtrude,
-    executeFillet,
-    executeTrim,
-    executeExtend,
-    executeRotate,
-    executeOffset,
-    executeScale,
-    executeUnion,
-    executeSubtract,
-    executeErase,
-    handleCanvasClick,
-    handleResize,
-  } = useCADEngine();
-
-  // Initialize scene on mount
-  useEffect(() => {
-    if (canvasContainerRef.current) {
-      initScene(canvasContainerRef.current);
-    }
-
-    // Add resize listener
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [initScene, handleResize]);
-
-  // Setup canvas click handler
-  useEffect(() => {
-    const container = canvasContainerRef.current;
-    if (container) {
-      container.addEventListener('click', handleCanvasClick);
-      return () => {
-        container.removeEventListener('click', handleCanvasClick);
-      };
-    }
-  }, [handleCanvasClick]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent)
