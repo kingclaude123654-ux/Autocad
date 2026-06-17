@@ -24,7 +24,7 @@ export default function App() {
   const [objects, setObjects] = useState<CADObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('line');
-  const [viewMode, setViewMode] = useState<ViewMode>('top');
+  const [viewMode] = useState<ViewMode>('top'); // Removed setViewMode to fix TS6133
   const [hudFeedback, setHudFeedback] = useState<string>('Ready. Tap and drag to draw.');
 
   // --- CONFIG ---
@@ -44,7 +44,7 @@ export default function App() {
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
 
-  // --- NEW PAN OPTION TRACKING REFS ---
+  // Pan Option Tracking
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
@@ -97,7 +97,6 @@ export default function App() {
 
   // --- CORE INTERACTION HANDLERS ---
   const handlePointerDown = (clientX: number, clientY: number) => {
-    // Handle Pan Tool Activation
     if (stateRef.current.currentTool === 'pan') {
       isPanningRef.current = true;
       panStartRef.current = { x: clientX, y: clientY };
@@ -122,7 +121,6 @@ export default function App() {
   };
 
   const handlePointerMove = (clientX: number, clientY: number) => {
-    // Run Pan Update Loop smoothly on touch/drag
     if (stateRef.current.currentTool === 'pan' && isPanningRef.current) {
       const dx = clientX - panStartRef.current.x;
       const dy = clientY - panStartRef.current.y;
@@ -219,7 +217,7 @@ export default function App() {
     rendererRef.current = renderer;
 
     const scene = sceneRef.current;
-    scene.background = new THREE.Color(0x0f172a); // Keeping your dark background intact
+    scene.background = new THREE.Color(0x0f172a);
 
     const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 2000);
     cameraRef.current = camera;
@@ -236,7 +234,6 @@ export default function App() {
     scene.add(pLine);
     previewLineRef.current = pLine;
 
-    // Direct Mobile Touch and Mouse Event Attachment
     const host = containerRef.current;
     
     const onMouseDown = (e: MouseEvent) => { handlePointerDown(e.clientX, e.clientY); };
@@ -296,7 +293,6 @@ export default function App() {
 
   return (
     <div className="w-screen h-screen flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden select-none">
-      {/* HEADER ROW */}
       <header className="h-14 px-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
         <span className="font-black text-indigo-500 tracking-wider text-sm">MINI_CAD</span>
         <button onClick={() => setObjects([])} className="px-3 py-1 bg-rose-600 rounded text-xs font-bold text-white">
@@ -304,10 +300,8 @@ export default function App() {
         </button>
       </header>
 
-      {/* RENDER VIEWPORT */}
       <main ref={containerRef} className="flex-1 w-full bg-slate-950 relative touch-none" />
 
-      {/* CONTROLS AREA */}
       <footer className="p-3 bg-slate-950 border-t border-slate-800 shrink-0">
         <div className="flex gap-1.5 overflow-x-auto pb-2">
           {(['select', 'pan', 'line', 'rectangle', 'circle'] as ToolType[]).map(tool => (
@@ -325,7 +319,6 @@ export default function App() {
           ))}
         </div>
 
-        {/* HUD INFORMATION FOOTER */}
         <div className="mt-2 flex justify-between items-center text-[11px] font-mono text-slate-500 border-t border-slate-900 pt-2">
           <span className="text-emerald-400">⚡ {hudFeedback}</span>
           <span>ITEMS: {objects.length}</span>
