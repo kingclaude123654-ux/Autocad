@@ -72,24 +72,9 @@ const B = (a: boolean): React.CSSProperties => ({
   cursor: 'pointer',
 });
 
-const SB: React.CSSProperties = {
-  ...B(false),
-  fontSize: 10,
-  padding: '4px 8px',
-  minHeight: 32,
-};
-
-const TB = (a: boolean): React.CSSProperties => ({
-  ...B(a),
-  borderRadius: 20,
-});
-
-const AB: React.CSSProperties = {
-  ...B(false),
-  fontSize: 11,
-  padding: '8px 12px',
-  minHeight: 40,
-};
+const SB: React.CSSProperties = { ...B(false), fontSize: 10, padding: '4px 8px', minHeight: 32 };
+const TB = (a: boolean): React.CSSProperties => ({ ...B(a), borderRadius: 20 });
+const AB: React.CSSProperties = { ...B(false), fontSize: 11, padding: '8px 12px', minHeight: 40 };
 
 const Sep: React.CSSProperties = {
   width: 1,
@@ -101,6 +86,8 @@ const Sep: React.CSSProperties = {
 const App: React.FC = () => {
   const ref = useRef<HTMLDivElement>(null);
   const finp = useRef<HTMLInputElement>(null);
+  const [ui, setUi] = useState(true);
+
   const e = useCADEngine();
   const {
     state,
@@ -123,14 +110,11 @@ const App: React.FC = () => {
     exportScene,
     importScene,
   } = e;
-  const [ui, setUi] = useState(true);
 
   useEffect(() => {
     if (ref.current) initScene(ref.current);
     window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
+    return () => window.removeEventListener('resize', handleResize);
   }, [initScene, handleResize]);
 
   useEffect(() => {
@@ -157,26 +141,28 @@ const App: React.FC = () => {
     URL.revokeObjectURL(u);
   }, [exportScene]);
 
-  const open = useCallback(() => {
-    finp.current?.click();
-  }, []);
+  const open = useCallback(() => finp.current?.click(), []);
 
-  const onFile = useCallback((ev: React.ChangeEvent<HTMLInputElement>) => {
-    const f = ev.target.files?.[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      if (typeof r.result === 'string') importScene(r.result);
-    };
-    r.readAsText(f);
-    if (finp.current) finp.current.value = '';
-  }, [importScene]);
+  const onFile = useCallback(
+    (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const f = ev.target.files?.[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        if (typeof r.result === 'string') importScene(r.result);
+      };
+      r.readAsText(f);
+      if (finp.current) finp.current.value = '';
+    },
+    [importScene]
+  );
 
   const sel = state.selectedId !== null;
 
   return (
     <div style={S.app}>
       <input ref={finp} type="file" accept=".json" style={{ display: 'none' }} onChange={onFile} />
+
       {ui && (
         <>
           <div style={S.bar}>
@@ -185,7 +171,9 @@ const App: React.FC = () => {
             <button onClick={() => lockView('front')} style={B(state.viewMode === 'front')}>Front</button>
             <button onClick={() => lockView('side')} style={B(state.viewMode === 'side')}>Side</button>
             <div style={Sep} />
-            <button onClick={toggleOrthoMode} style={{ ...B(state.orthoMode), backgroundColor: state.orthoMode ? '#e94560' : '#0f3460' }}>{state.orthoMode ? 'Ortho' : 'Persp'}</button>
+            <button onClick={toggleOrthoMode} style={{ ...B(state.orthoMode), backgroundColor: state.orthoMode ? '#e94560' : '#0f3460' }}>
+              {state.orthoMode ? 'Ortho' : 'Persp'}
+            </button>
             <div style={Sep} />
             <button onClick={undo} style={SB} disabled={state.historyIndex <= 0}>Undo</button>
             <button onClick={redo} style={SB} disabled={state.historyIndex >= state.history.length - 1}>Redo</button>
@@ -193,6 +181,7 @@ const App: React.FC = () => {
             <button onClick={save} style={SB}>Save</button>
             <button onClick={open} style={SB}>Open</button>
           </div>
+
           <div style={S.bar}>
             <button onClick={() => e.setActiveTool('select')} style={TB(state.activeTool === 'select')}>Sel</button>
             <button onClick={() => e.setActiveTool('line')} style={TB(state.activeTool === 'line')}>Line</button>
@@ -204,7 +193,9 @@ const App: React.FC = () => {
           </div>
         </>
       )}
+
       <div ref={ref} style={S.canvas} onDoubleClick={() => setUi(!ui)} />
+
       {ui && (
         <>
           <div style={S.bbar}>
@@ -214,6 +205,7 @@ const App: React.FC = () => {
             <button onClick={() => { if (sel) executeScale(state.selectedId!, 1.2, 1.2, 1.2); }} style={AB} disabled={!sel}>Scale</button>
             <button onClick={() => { if (sel) executeErase(state.selectedId!); }} style={{ ...AB, backgroundColor: '#e94560' }} disabled={!sel}>Del</button>
           </div>
+
           <div style={S.status}>
             <span>{state.activeTool}</span>
             <span>{state.touchCount > 1 ? 'CAM' : state.isDrawing ? 'DRAW' : ''}</span>
