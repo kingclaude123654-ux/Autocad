@@ -1,190 +1,160 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-// --- SYSTEM MODULE IDENTIFIERS ---
+// --- SYSTEM TYPES ---
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
 export type ToolType = 
   | 'select' | 'pan' | 'move' | 'copy' | 'erase'
   | 'line' | 'polyline' | 'rectangle' | 'triangle' | 'circle'
   | 'extrude' | 'fillet' | 'chamfer' | 'union' | 'subtract';
 
-export interface Point2D {
-  x: number;
-  y: number;
-}
+export interface Point2D { x: number; y: number; }
 
 export interface CADObject {
   id: string;
   type: string;
   points: Point2D[];
   color: string;
-  layer: string;
   is3D: boolean;
   extrusionHeight?: number;
-  properties?: {
-    length?: number;
-    width?: number;
-    height?: number;
-    radius?: number;
-  };
+  properties?: { radius?: number; [key: string]: any; };
 }
 
 export default function App() {
-  // --- MASTER STATE PLATFORM ---
+  // --- APPLICATION STATE ---
   const [objects, setObjects] = useState<CADObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('line');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
-  const [hudFeedback, setHudFeedback] = useState<string>('AutoCAD Engine Online. Select tool to begin layout.');
+  const [hudFeedback, setHudFeedback] = useState<string>('System Initialized. Ready.');
   
   const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
   
-  const unit = 'mm';
-  const workspaceSize = 1000;
-  const gridSpacing = 20;
-
-  // Track History Matrices (Undo / Redo Setup)
   const [history, setHistory] = useState<CADObject[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
-  // --- CORE SYSTEM POINTER ENGINE REFS ---
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
+  // --- THREE.JS ENGINE REFS ---
+  const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const previewLineRef = useRef<THREE.Line | null>(null);
-  const visualObjectsMapRef = useRef<Map<string, THREE.Object3D>>(new Map());
+  const objectsGroupRef = useRef<THREE.Group | null>(null);
 
-  // Input Calculators
-  const isDrawingRef = useRef<boolean>(false);
-  const startPointRef = useRef<Point2D | null>(null);
-  const currentPointRef = useRef<Point2D | null>(null);
-  const polylinePointsRef = useRef<Point2D[]>([]);
+  // --- INTERACTION REFS ---
+  const isDrawing = useRef(false);
+  const isPanning = useRef(false);
+  const startPt = useRef<Point2D | null>(null);
+  const currentPt = useRef<Point2D | null>(null);
+  const panStart = useRef({ x: 0, y: 0 });
+  const polylinePoints = useRef<Point2D[]>([]);
   
-  // Navigation Trackers
-  const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
-  const cameraZoomRef = useRef<number>(1.0);
-  const isPanningRef = useRef<boolean>(false);
-  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const camOffset = useRef(new THREE.Vector3(0, 0, 0));
+  const camZoom = useRef(1.0);
 
-  // Atomic state syncing mirror to completely bypass closure freezing bugs
-  const stateRef = useRef({ currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode, gridSpacing });
+  // Sync state to ref for safe event listeners without closure staleness
+  const state = useRef({ currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode });
   useEffect(() => {
-    stateRef.current = { currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode, gridSpacing };
+    state.current = { currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode };
   }, [currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode]);
 
   const generateId = () => Math.random().toString(36).substring(2, 9);
 
-  // --- FORCE CAMERA SPACE RECALCULATIONS ---
-  const updateCameraTransformationMatrix = () => {
-    if (!cameraRef.current || !rendererRef.current || !sceneRef.current) return;
-    const offset = cameraOffsetRef.current;
-    const distanceTarget = 400 * cameraZoomRef.current;
+  // --- HISTORY MANAGEMENT ---
+  const commitState = (newObjects: CADObject[]) => {
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newObjects);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+    setObjects(newObjects);
+  };
 
-    if (viewMode === 'top') {
-      cameraRef.current.position.set(offset.x, distanceTarget, offset.z + 0.001);
-    } else if (viewMode === 'front') {
-      cameraRef.current.position.set(offset.x, offset.y, distanceTarget);
-    } else if (viewMode === 'side') {
-      cameraRef.current.position.set(distanceTarget, offset.y, offset.z);
-    } else if (viewMode === 'isometric') {
-      cameraRef.current.position.set(offset.x + distanceTarget * 0.7, offset.y + distanceTarget * 0.7, offset.z + distanceTarget * 0.7);
+  const undo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(historyIndex - 1);
+      setObjects(history[historyIndex - 1]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      setHistoryIndex(historyIndex + 1);
+      setObjects(history[historyIndex + 1]);
+    }
+  };
+
+  // --- CAMERA CONTROLLER ---
+  const updateCamera = () => {
+    if (!cameraRef.current || !rendererRef.current || !sceneRef.current) return;
+    const cam = cameraRef.current;
+    const dist = 500 * camZoom.current;
+    const off = camOffset.current;
+
+    switch (state.current.viewMode) {
+      case 'top': cam.position.set(off.x, dist, off.z + 0.1); break;
+      case 'front': cam.position.set(off.x, off.y, dist); break;
+      case 'side': cam.position.set(dist, off.y, off.z); break;
+      case 'isometric': cam.position.set(off.x + dist*0.7, off.y + dist*0.7, off.z + dist*0.7); break;
     }
     
-    cameraRef.current.lookAt(offset.x, offset.y, offset.z);
-    cameraRef.current.updateProjectionMatrix();
-    rendererRef.current.render(sceneRef.current, cameraRef.current);
+    cam.lookAt(off.x, off.y, off.z);
+    cam.updateProjectionMatrix();
+    rendererRef.current.render(sceneRef.current, cam);
   };
 
-  useEffect(() => { updateCameraTransformationMatrix(); }, [viewMode]);
+  useEffect(() => { updateCamera(); }, [viewMode]);
 
-  const pushStateToHistory = (nextMatrix: CADObject[]) => {
-    const historicalTimeline = history.slice(0, historyIndex + 1);
-    setHistory([...historicalTimeline, nextMatrix]);
-    setHistoryIndex(historicalTimeline.length);
-    setObjects(nextMatrix);
-  };
+  // --- MATH & RAYCASTING ---
+  const getWorkspaceCoord = (clientX: number, clientY: number): Point2D | null => {
+    if (!mountRef.current || !cameraRef.current) return null;
+    const rect = mountRef.current.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
-  const runUndoCycle = () => {
-    if (historyIndex > 0) {
-      const targetIdx = historyIndex - 1;
-      setHistoryIndex(targetIdx);
-      setObjects(history[targetIdx]);
-      setHudFeedback("Undo action performed.");
-    } else {
-      setHudFeedback("History limit reached.");
-    }
-  };
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
 
-  const runRedoCycle = () => {
-    if (historyIndex < history.length - 1) {
-      const targetIdx = historyIndex + 1;
-      setHistoryIndex(targetIdx);
-      setObjects(history[targetIdx]);
-      setHudFeedback("Redo action performed.");
-    } else {
-      setHudFeedback("Newest layout reached.");
-    }
-  };
+    const planeNormal = new THREE.Vector3(0, 1, 0);
+    if (state.current.viewMode === 'front') planeNormal.set(0, 0, 1);
+    if (state.current.viewMode === 'side') planeNormal.set(1, 0, 0);
 
-  // --- SPATIAL MATH COORDINATE TRACER ---
-  const calculateRaycastWorkspaceIntersection = (clientX: number, clientY: number): Point2D | null => {
-    if (!containerRef.current || !cameraRef.current) return null;
-    const boundaries = containerRef.current.getBoundingClientRect();
-    const clipSpaceX = ((clientX - boundaries.left) / boundaries.width) * 2 - 1;
-    const clipSpaceY = -((clientY - boundaries.top) / boundaries.height) * 2 + 1;
+    const targetPlane = new THREE.Plane(planeNormal, 0);
+    const intersect = new THREE.Vector3();
 
-    const computationalRaycaster = new THREE.Raycaster();
-    computationalRaycaster.setFromCamera(new THREE.Vector2(clipSpaceX, clipSpaceY), cameraRef.current);
-
-    let geometricSurfaceNormal = new THREE.Vector3(0, 1, 0);
-    if (stateRef.current.viewMode === 'front') geometricSurfaceNormal.set(0, 0, 1);
-    if (stateRef.current.viewMode === 'side') geometricSurfaceNormal.set(1, 0, 0);
-
-    const calculationPlane = new THREE.Plane(geometricSurfaceNormal, 0);
-    const spatialIntersectionVector = new THREE.Vector3();
-
-    if (computationalRaycaster.ray.intersectPlane(calculationPlane, spatialIntersectionVector)) {
-      let absoluteX = spatialIntersectionVector.x;
-      let absoluteY = (stateRef.current.viewMode === 'front' || stateRef.current.viewMode === 'side') 
-        ? spatialIntersectionVector.y 
-        : spatialIntersectionVector.z;
-
-      if (stateRef.current.snapToGrid) {
-        absoluteX = Math.round(absoluteX / stateRef.current.gridSpacing) * stateRef.current.gridSpacing;
-        absoluteY = Math.round(absoluteY / stateRef.current.gridSpacing) * stateRef.current.gridSpacing;
+    if (raycaster.ray.intersectPlane(targetPlane, intersect)) {
+      let finalX = intersect.x;
+      let finalY = (state.current.viewMode === 'front' || state.current.viewMode === 'side') ? intersect.y : intersect.z;
+      
+      if (state.current.snapToGrid) {
+        finalX = Math.round(finalX / 20) * 20;
+        finalY = Math.round(finalY / 20) * 20;
       }
-      return { x: absoluteX, y: absoluteY };
+      return { x: finalX, y: finalY };
     }
     return null;
   };
 
-  // --- UNIFIED POINTER CONTROLLER ENGINE ---
-  const handleEnginePointerDown = (e: PointerEvent) => {
-    const tool = stateRef.current.currentTool;
-    if (tool === 'pan' || e.button === 2) {
-      isPanningRef.current = true;
-      panStartRef.current = { x: e.clientX, y: e.clientY };
+  // --- EVENT HANDLERS (POINTER) ---
+  const onPointerDown = (e: React.PointerEvent) => {
+    const tool = state.current.currentTool;
+    
+    if (tool === 'pan' || e.button === 1 || e.button === 2) {
+      isPanning.current = true;
+      panStart.current = { x: e.clientX, y: e.clientY };
       return;
     }
 
-    const calculatedVectorCoords = calculateRaycastWorkspaceIntersection(e.clientX, e.clientY);
-    if (!calculatedVectorCoords) return;
+    const coord = getWorkspaceCoord(e.clientX, e.clientY);
+    if (!coord) return;
 
-    if (tool === 'select' || tool === 'erase' || tool === 'extrude' || tool === 'fillet' || tool === 'chamfer') {
-      const selectedMatch = stateRef.current.objects.find(obj => 
-        obj.points.some(pt => Math.abs(pt.x - calculatedVectorCoords.x) < 25 && Math.abs(pt.y - calculatedVectorCoords.y) < 25)
-      );
-
-      if (selectedMatch) {
-        setSelectedId(selectedMatch.id);
-        setHudFeedback(`Focused Target: ${selectedMatch.type.toUpperCase()}`);
+    if (['select', 'erase', 'extrude', 'fillet', 'chamfer'].includes(tool)) {
+      const hit = state.current.objects.find(o => o.points.some(p => Math.abs(p.x - coord.x) < 15 && Math.abs(p.y - coord.y) < 15));
+      if (hit) {
+        setSelectedId(hit.id);
         if (tool === 'erase') {
-          const absoluteRemainingList = stateRef.current.objects.filter(o => o.id !== selectedMatch.id);
-          pushStateToHistory(absoluteRemainingList);
+          commitState(state.current.objects.filter(o => o.id !== hit.id));
           setSelectedId(null);
-          setHudFeedback("Element deleted.");
         }
       } else {
         setSelectedId(null);
@@ -192,505 +162,274 @@ export default function App() {
       return;
     }
 
-    // Initialize Draw Sequence
-    isDrawingRef.current = true;
-    startPointRef.current = calculatedVectorCoords;
-    currentPointRef.current = calculatedVectorCoords;
+    isDrawing.current = true;
+    startPt.current = coord;
+    currentPt.current = coord;
 
     if (tool === 'polyline') {
-      if (polylinePointsRef.current.length === 0) {
-        polylinePointsRef.current.push(calculatedVectorCoords);
-      }
-      startPointRef.current = polylinePointsRef.current[polylinePointsRef.current.length - 1];
+      if (polylinePoints.current.length === 0) polylinePoints.current.push(coord);
+      startPt.current = polylinePoints.current[polylinePoints.current.length - 1];
     }
   };
 
-  const handleEnginePointerMove = (e: PointerEvent) => {
-    if (isPanningRef.current) {
-      const movementDeltaX = e.clientX - panStartRef.current.x;
-      const movementDeltaY = e.clientY - panStartRef.current.y;
-      panStartRef.current = { x: e.clientX, y: e.clientY };
-
-      const panMultiplier = 0.5 * cameraZoomRef.current;
-      if (stateRef.current.viewMode === 'top') {
-        cameraOffsetRef.current.x -= movementDeltaX * panMultiplier;
-        cameraOffsetRef.current.z -= movementDeltaY * panMultiplier;
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (isPanning.current) {
+      const dx = e.clientX - panStart.current.x;
+      const dy = e.clientY - panStart.current.y;
+      panStart.current = { x: e.clientX, y: e.clientY };
+      
+      const speed = 0.5 * camZoom.current;
+      if (state.current.viewMode === 'top') {
+        camOffset.current.x -= dx * speed;
+        camOffset.current.z -= dy * speed;
       } else {
-        cameraOffsetRef.current.x -= movementDeltaX * panMultiplier;
-        cameraOffsetRef.current.y += movementDeltaY * panMultiplier;
+        camOffset.current.x -= dx * speed;
+        camOffset.current.y += dy * speed;
       }
-      updateCameraTransformationMatrix();
+      updateCamera();
       return;
     }
 
-    if (!isDrawingRef.current || !startPointRef.current) return;
+    if (!isDrawing.current || !startPt.current) return;
 
-    let relativeWorkspaceCoords = calculateRaycastWorkspaceIntersection(e.clientX, e.clientY);
-    if (!relativeWorkspaceCoords) return;
+    let coord = getWorkspaceCoord(e.clientX, e.clientY);
+    if (!coord) return;
 
-    if (stateRef.current.orthoMode) {
-      const alignmentDifferenceX = Math.abs(relativeWorkspaceCoords.x - startPointRef.current.x);
-      const alignmentDifferenceY = Math.abs(relativeWorkspaceCoords.y - startPointRef.current.y);
-      if (alignmentDifferenceX > alignmentDifferenceY) {
-        relativeWorkspaceCoords = { x: relativeWorkspaceCoords.x, y: startPointRef.current.y };
-      } else {
-        relativeWorkspaceCoords = { x: startPointRef.current.x, y: relativeWorkspaceCoords.y };
-      }
+    if (state.current.orthoMode) {
+      const dx = Math.abs(coord.x - startPt.current.x);
+      const dy = Math.abs(coord.y - startPt.current.y);
+      coord = dx > dy ? { x: coord.x, y: startPt.current.y } : { x: startPt.current.x, y: coord.y };
     }
 
-    currentPointRef.current = relativeWorkspaceCoords;
-    const originPoint = startPointRef.current;
-    const dynamicCalculatedRadiusLength = Math.round(Math.hypot(relativeWorkspaceCoords.x - originPoint.x, relativeWorkspaceCoords.y - originPoint.y));
+    currentPt.current = coord;
 
-    if (previewLineRef.current) {
-      const dynamicPreviewPointsArray: THREE.Vector3[] = [];
-      const tool = stateRef.current.currentTool;
+    // Render Preview
+    if (previewLineRef.current && rendererRef.current && sceneRef.current && cameraRef.current) {
+      const pts: THREE.Vector3[] = [];
+      const origin = startPt.current;
+      const dist = Math.hypot(coord.x - origin.x, coord.y - origin.y);
+      const tool = state.current.currentTool;
 
       if (tool === 'line' || tool === 'polyline') {
-        dynamicPreviewPointsArray.push(new THREE.Vector3(originPoint.x, 0.6, originPoint.y), new THREE.Vector3(relativeWorkspaceCoords.x, 0.6, relativeWorkspaceCoords.y));
+        pts.push(new THREE.Vector3(origin.x, 0.5, origin.y), new THREE.Vector3(coord.x, 0.5, coord.y));
       } else if (tool === 'rectangle') {
-        dynamicPreviewPointsArray.push(
-          new THREE.Vector3(originPoint.x, 0.6, originPoint.y),
-          new THREE.Vector3(relativeWorkspaceCoords.x, 0.6, originPoint.y),
-          new THREE.Vector3(relativeWorkspaceCoords.x, 0.6, relativeWorkspaceCoords.y),
-          new THREE.Vector3(originPoint.x, 0.6, relativeWorkspaceCoords.y),
-          new THREE.Vector3(originPoint.x, 0.6, originPoint.y)
+        pts.push(
+          new THREE.Vector3(origin.x, 0.5, origin.y), new THREE.Vector3(coord.x, 0.5, origin.y),
+          new THREE.Vector3(coord.x, 0.5, coord.y), new THREE.Vector3(origin.x, 0.5, coord.y),
+          new THREE.Vector3(origin.x, 0.5, origin.y)
         );
-      } else if (tool === 'triangle') {
-        for (let i = 0; i <= 3; i++) {
-          const radialAngleStep = (i / 3) * Math.PI * 2;
-          dynamicPreviewPointsArray.push(new THREE.Vector3(originPoint.x + Math.cos(radialAngleStep) * dynamicCalculatedRadiusLength, 0.6, originPoint.y + Math.sin(radialAngleStep) * dynamicCalculatedRadiusLength));
-        }
-      } else if (tool === 'circle') {
-        for (let i = 0; i <= 64; i++) {
-          const radialAngleStep = (i / 64) * Math.PI * 2;
-          dynamicPreviewPointsArray.push(new THREE.Vector3(originPoint.x + Math.cos(radialAngleStep) * dynamicCalculatedRadiusLength, 0.6, originPoint.y + Math.sin(radialAngleStep) * dynamicCalculatedRadiusLength));
+      } else if (tool === 'circle' || tool === 'triangle') {
+        const segments = tool === 'circle' ? 64 : 3;
+        for (let i = 0; i <= segments; i++) {
+          const angle = (i / segments) * Math.PI * 2;
+          pts.push(new THREE.Vector3(origin.x + Math.cos(angle)*dist, 0.5, origin.y + Math.sin(angle)*dist));
         }
       }
 
-      previewLineRef.current.geometry.setFromPoints(dynamicPreviewPointsArray);
-      if (rendererRef.current && cameraRef.current && sceneRef.current) {
-        rendererRef.current.render(sceneRef.current, cameraRef.current);
-      }
+      previewLineRef.current.geometry.setFromPoints(pts);
+      rendererRef.current.render(sceneRef.current, cameraRef.current);
     }
   };
 
-  const handleEnginePointerUp = () => {
-    if (isPanningRef.current) {
-      isPanningRef.current = false;
+  const onPointerUp = () => {
+    isPanning.current = false;
+    
+    if (!isDrawing.current || !startPt.current || !currentPt.current) {
+      isDrawing.current = false;
       return;
     }
 
-    if (!isDrawingRef.current || !startPointRef.current || !currentPointRef.current) {
-      isDrawingRef.current = false;
-      return;
-    }
+    isDrawing.current = false;
+    const origin = startPt.current;
+    const end = currentPt.current;
+    const dist = Math.hypot(end.x - origin.x, end.y - origin.y);
 
-    isDrawingRef.current = false;
-    const originPoint = startPointRef.current;
-    const endpointsMatrix = currentPointRef.current;
-    const finalCalculatedUnitDimension = Math.round(Math.hypot(endpointsMatrix.x - originPoint.x, endpointsMatrix.y - originPoint.y));
+    if (dist > 1) {
+      const tool = state.current.currentTool;
+      let newObj: CADObject | null = null;
 
-    if (finalCalculatedUnitDimension < 2) return;
-
-    let targetCreatedNode: CADObject | null = null;
-    const tool = stateRef.current.currentTool;
-
-    if (tool === 'line') {
-      targetCreatedNode = {
-        id: generateId(),
-        type: 'line',
-        points: [originPoint, endpointsMatrix],
-        color: '#3b82f6',
-        layer: '0',
-        is3D: false,
-        properties: { length: finalCalculatedUnitDimension }
-      };
-    } else if (tool === 'polyline') {
-      polylinePointsRef.current.push(endpointsMatrix);
-      const freezeImmutableArray = [...polylinePointsRef.current];
-      
-      setObjects((prev) => [
-        ...prev.filter(o => o.id !== 'temp_pline'),
-        { id: 'temp_pline', type: 'polyline', points: freezeImmutableArray, color: '#38bdf8', layer: '0', is3D: false }
-      ]);
-      return; 
-    } else if (tool === 'rectangle') {
-      targetCreatedNode = {
-        id: generateId(),
-        type: 'rectangle',
-        points: [originPoint, { x: endpointsMatrix.x, y: originPoint.y }, endpointsMatrix, { x: originPoint.x, y: endpointsMatrix.y }],
-        color: '#10b981',
-        layer: '0',
-        is3D: false,
-        properties: { width: Math.abs(endpointsMatrix.x - originPoint.x), height: Math.abs(endpointsMatrix.y - originPoint.y) }
-      };
-    } else if (tool === 'triangle') {
-      const localTriangleVertices: Point2D[] = [];
-      for (let i = 0; i < 3; i++) {
-        const thetaStep = (i / 3) * Math.PI * 2;
-        localTriangleVertices.push({ x: originPoint.x + Math.cos(thetaStep) * finalCalculatedUnitDimension, y: originPoint.y + Math.sin(thetaStep) * finalCalculatedUnitDimension });
+      if (tool === 'line') {
+        newObj = { id: generateId(), type: 'line', points: [origin, end], color: '#3b82f6', is3D: false };
+      } else if (tool === 'polyline') {
+        polylinePoints.current.push(end);
+        setObjects(prev => [...prev.filter(o => o.id !== 'temp_pline'), { id: 'temp_pline', type: 'polyline', points: [...polylinePoints.current], color: '#38bdf8', is3D: false }]);
+        return; 
+      } else if (tool === 'rectangle') {
+        newObj = { id: generateId(), type: 'rectangle', points: [origin, {x: end.x, y: origin.y}, end, {x: origin.x, y: end.y}], color: '#10b981', is3D: false };
+      } else if (tool === 'triangle' || tool === 'circle') {
+        const segments = tool === 'circle' ? 64 : 3;
+        const pts: Point2D[] = [];
+        for (let i = 0; i < segments; i++) {
+          const angle = (i / segments) * Math.PI * 2;
+          pts.push({ x: origin.x + Math.cos(angle)*dist, y: origin.y + Math.sin(angle)*dist });
+        }
+        newObj = { id: generateId(), type: tool, points: pts, color: tool === 'circle' ? '#a855f7' : '#f59e0b', is3D: false, properties: { radius: dist } };
       }
-      targetCreatedNode = {
-        id: generateId(),
-        type: 'triangle',
-        points: localTriangleVertices,
-        color: '#f59e0b',
-        layer: '0',
-        is3D: false,
-        properties: { length: finalCalculatedUnitDimension }
-      };
-    } else if (tool === 'circle') {
-      const localCircleVertices: Point2D[] = [];
-      for (let i = 0; i < 64; i++) {
-        const thetaStep = (i / 64) * Math.PI * 2;
-        localCircleVertices.push({ x: originPoint.x + Math.cos(thetaStep) * finalCalculatedUnitDimension, y: originPoint.y + Math.sin(thetaStep) * finalCalculatedUnitDimension });
+
+      if (newObj) {
+        commitState([...state.current.objects.filter(o => o.id !== 'temp_pline'), newObj]);
+        setHudFeedback(`${newObj.type.toUpperCase()} created.`);
       }
-      targetCreatedNode = {
-        id: generateId(),
-        type: 'circle',
-        points: localCircleVertices,
-        color: '#a855f7',
-        layer: '0',
-        is3D: false,
-        properties: { radius: finalCalculatedUnitDimension }
-      };
     }
 
-    if (targetCreatedNode) {
-      const activeStateMatrix = stateRef.current.objects.filter(o => o.id !== 'temp_pline');
-      const compiledTotalTimelineState = [...activeStateMatrix, targetCreatedNode];
-      pushStateToHistory(compiledTotalTimelineState);
-      setSelectedId(targetCreatedNode.id);
-      setHudFeedback(`Committed ${targetCreatedNode.type.toUpperCase()} | Scale: ${finalCalculatedUnitDimension}${unit}`);
-    }
-
-    startPointRef.current = null;
-    currentPointRef.current = null;
-    if (previewLineRef.current) {
-      previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-    }
+    startPt.current = null; currentPt.current = null;
+    if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([]);
+    updateCamera();
   };
 
-  const closePolylineNodeSequence = () => {
-    if (polylinePointsRef.current.length < 2) return;
-    const committedPolylineNode: CADObject = {
-      id: generateId(),
-      type: 'polyline',
-      points: [...polylinePointsRef.current],
-      color: '#06b6d4',
-      layer: '0',
-      is3D: false
-    };
-    const pureStateListWithoutTemp = stateRef.current.objects.filter(o => o.id !== 'temp_pline');
-    pushStateToHistory([...pureStateListWithoutTemp, committedPolylineNode]);
-    polylinePointsRef.current = [];
-    setHudFeedback("Polyline geometry structure pinned down successfully.");
+  // Safe pan/zoom via wheel
+  const onWheel = (e: React.WheelEvent) => {
+    camZoom.current = Math.max(0.1, Math.min(5, camZoom.current + e.deltaY * 0.001));
+    updateCamera();
   };
 
-  // --- MODIFIERS RUNTIME ENGINE ---
-  const applyExtrusionLogicToNode = () => {
-    if (!selectedId) return alert('Tap and highlight a drawing element first.');
-    const depthStr = prompt("Specify absolute extrusion height (mm):", "60");
-    if (!depthStr) return;
-    const computedNumericalDepthValue = parseFloat(depthStr) || 60;
-
-    const modifiedTimelineObjectsList = objects.map(obj => 
-      obj.id === selectedId ? { ...obj, is3D: true, extrusionHeight: computedNumericalDepthValue } : obj
-    );
-    pushStateToHistory(modifiedTimelineObjectsList);
-    setViewMode('isometric');
-    setHudFeedback(`Node modified to 3D Extrusion Depth: ${computedNumericalDepthValue}mm`);
-  };
-
-  const triggerDynamicFilletEdge = () => {
-    if (!selectedId) return alert('Highlight an element first.');
-    const radiusDimensionInput = prompt("Enter Fillet Arc Radius:", "15");
-    if (!radiusDimensionInput) return;
-    setHudFeedback(`Simulated radial curve fillet at edge matching: ${radiusDimensionInput}mm`);
-  };
-
-  const triggerDynamicChamferEdge = () => {
-    if (!selectedId) return alert('Highlight an element first.');
-    const flatCutDimensionInput = prompt("Enter Chamfer Bevel Dimension:", "12");
-    if (!flatCutDimensionInput) return;
-    setHudFeedback(`Simulated planar bevel edge cut chamfer matching: ${flatCutDimensionInput}mm`);
-  };
-
-  const clearCanvasGridWorkspace = () => {
-    if (window.confirm("Initialize clean working environment blueprint?")) {
-      setObjects([]);
-      setSelectedId(null);
-      polylinePointsRef.current = [];
-      setHistory([[]]);
-      setHistoryIndex(0);
-      setHudFeedback("AutoCAD active working matrix cleared clean.");
-    }
-  };
-
-  const downloadSessionJSONDataBlueprint = () => {
-    const rawJSONSerializationStreamString = JSON.stringify(objects, null, 2);
-    const targetFileBlobContainer = new Blob([rawJSONSerializationStreamString], { type: 'application/json' });
-    const localVirtualAnchorElement = document.createElement('a');
-    localVirtualAnchorElement.download = `cad_blueprint_export_${Date.now()}.json`;
-    localVirtualAnchorElement.href = URL.createObjectURL(targetFileBlobContainer);
-    localVirtualAnchorElement.click();
-    setHudFeedback("Project JSON blueprint package database saved safely.");
-  };
-
-  const executePDFVectorOutputPrintJob = () => {
-    setHudFeedback("Preparing print canvas spool...");
-    setTimeout(() => {
-      window.print();
-      setHudFeedback("PDF rendering completed successfully.");
-    }, 400);
-  };
-
-  // --- COMPONENT PIPELINE LIFE INITIALIZER ---
+  // --- ENGINE SETUP (RUNS ONCE) ---
   useEffect(() => {
-    if (!containerRef.current) return;
-    const computedWidth = containerRef.current.clientWidth || window.innerWidth;
-    const computedHeight = containerRef.current.clientHeight || (window.innerHeight - 56);
+    if (!mountRef.current) return;
+    
+    const w = mountRef.current.clientWidth;
+    const h = mountRef.current.clientHeight;
 
-    const graphicsEngineRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
-    graphicsEngineRenderer.setSize(computedWidth, computedHeight);
-    graphicsEngineRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    containerRef.current.innerHTML = '';
-    containerRef.current.appendChild(graphicsEngineRenderer.domElement);
-    rendererRef.current = graphicsEngineRenderer;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: false }); // preserveDrawingBuffer: false prevents crashes on mobile
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mountRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
 
-    const standardSceneGraphInstance = new THREE.Scene();
-    standardSceneGraphInstance.background = new THREE.Color(0x060a13); 
-    sceneRef.current = standardSceneGraphInstance;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0f1d);
+    sceneRef.current = scene;
 
-    const systemPerspectiveCameraInstance = new THREE.PerspectiveCamera(45, computedWidth / computedHeight, 1, 10000);
-    cameraRef.current = systemPerspectiveCameraInstance;
+    const camera = new THREE.PerspectiveCamera(45, w / h, 1, 10000);
+    cameraRef.current = camera;
 
-    standardSceneGraphInstance.add(new THREE.AmbientLight(0xffffff, 0.95));
-    const structuralDirectionalSunlightNode = new THREE.DirectionalLight(0xffffff, 0.55);
-    structuralDirectionalSunlightNode.position.set(300, 600, 300);
-    standardSceneGraphInstance.add(structuralDirectionalSunlightNode);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    dirLight.position.set(100, 500, 100);
+    scene.add(dirLight);
 
-    const calculationsDivisionsMetric = Math.round(workspaceSize / gridSpacing);
-    const computationalGridMeshHelper = new THREE.GridHelper(workspaceSize, calculationsDivisionsMetric, 0x4f46e5, 0x111827);
-    standardSceneGraphInstance.add(computationalGridMeshHelper);
+    const grid = new THREE.GridHelper(1000, 50, 0x4f46e5, 0x111827);
+    scene.add(grid);
 
-    const activePreviewLineMaterialNode = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
-    const realTimePreviewLineGeometryReference = new THREE.Line(new THREE.BufferGeometry(), activePreviewLineMaterialNode);
-    realTimePreviewLineGeometryReference.renderOrder = 2000;
-    standardSceneGraphInstance.add(realTimePreviewLineGeometryReference);
-    previewLineRef.current = realTimePreviewLineGeometryReference;
+    const previewMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 2, depthTest: false });
+    const previewLine = new THREE.Line(new THREE.BufferGeometry(), previewMat);
+    previewLine.renderOrder = 999;
+    scene.add(previewLine);
+    previewLineRef.current = previewLine;
 
-    const interceptorTargetElementHost = containerRef.current;
-    interceptorTargetElementHost.addEventListener('pointerdown', handleEnginePointerDown);
-    interceptorTargetElementHost.addEventListener('pointermove', handleEnginePointerMove);
-    window.addEventListener('pointerup', handleEnginePointerUp);
+    const objGroup = new THREE.Group();
+    scene.add(objGroup);
+    objectsGroupRef.current = objGroup;
 
-    const handleWindowViewportResizeEvent = () => {
-      if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      cameraRef.current.aspect = w / h;
+    updateCamera();
+
+    const handleResize = () => {
+      if (!mountRef.current || !cameraRef.current || !rendererRef.current) return;
+      const nw = mountRef.current.clientWidth;
+      const nh = mountRef.current.clientHeight;
+      cameraRef.current.aspect = nw / nh;
       cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-      rendererRef.current.render(sceneRef.current!, cameraRef.current);
+      rendererRef.current.setSize(nw, nh);
+      updateCamera();
     };
-    window.addEventListener('resize', handleWindowViewportResizeEvent);
-
-    updateCameraTransformationMatrix();
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      interceptorTargetElementHost.removeEventListener('pointerdown', handleEnginePointerDown);
-      interceptorTargetElementHost.removeEventListener('pointermove', handleEnginePointerMove);
-      window.removeEventListener('pointerup', handleEnginePointerUp);
-      window.removeEventListener('resize', handleWindowViewportResizeEvent);
-      graphicsEngineRenderer.dispose();
+      window.removeEventListener('resize', handleResize);
+      renderer.dispose();
+      mountRef.current?.removeChild(renderer.domElement);
     };
   }, []);
 
-  // --- SEPARATION SYNC RE-RENDER RE-DRAW SEQUENCER ---
+  // --- RE-RENDER COMMITTED OBJECTS ONLY ---
   useEffect(() => {
-    if (!sceneRef.current || !rendererRef.current || !cameraRef.current) return;
+    if (!objectsGroupRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
     
-    visualObjectsMapRef.current.forEach(item => sceneRef.current?.remove(item));
-    visualObjectsMapRef.current.clear();
+    objectsGroupRef.current.clear(); // Safe clear of just the objects, not the whole scene
 
-    objects.forEach((dataNode) => {
-      if (!dataNode || !dataNode.points) return;
-      const isTargetHighlighted = dataNode.id === selectedId;
-      const computationalHexColorToken = isTargetHighlighted ? 0xf43f5e : new THREE.Color(dataNode.color || '#3b82f6').getHex();
-      const unifiedNodeGeometricGroup = new THREE.Group();
+    objects.forEach(obj => {
+      if (!obj.points || obj.points.length < 2) return;
+      const color = obj.id === selectedId ? 0xf43f5e : new THREE.Color(obj.color).getHex();
+      
+      if (obj.is3D && obj.extrusionHeight) {
+        const shape = new THREE.Shape();
+        shape.moveTo(obj.points[0].x, obj.points[0].y);
+        for(let i=1; i<obj.points.length; i++) shape.lineTo(obj.points[i].x, obj.points[i].y);
+        if (obj.type !== 'line') shape.lineTo(obj.points[0].x, obj.points[0].y);
 
-      if (dataNode.is3D && dataNode.extrusionHeight) {
-        const customPolygonalShape = new THREE.Shape();
-        if (dataNode.points.length > 1) {
-          customPolygonalShape.moveTo(dataNode.points[0].x, dataNode.points[0].y);
-          for (let i = 1; i < dataNode.points.length; i++) {
-            customPolygonalShape.lineTo(dataNode.points[i].x, dataNode.points[i].y);
-          }
-          if (dataNode.type !== 'line') {
-            customPolygonalShape.lineTo(dataNode.points[0].x, dataNode.points[0].y);
-          }
-
-          const processingExtrudeMeshGeometry = new THREE.ExtrudeGeometry(customPolygonalShape, { depth: dataNode.extrusionHeight, bevelEnabled: false });
-          processingExtrudeMeshGeometry.rotateX(-Math.PI / 2);
-          const structuralShaderMaterialContainer = new THREE.MeshStandardMaterial({ color: computationalHexColorToken, roughness: 0.25, side: THREE.DoubleSide });
-          const mechanicalSolidStructuralMesh = new THREE.Mesh(processingExtrudeMeshGeometry, structuralShaderMaterialContainer);
-          unifiedNodeGeometricGroup.add(mechanicalSolidStructuralMesh);
-        }
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
+        geo.rotateX(-Math.PI/2);
+        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, side: THREE.DoubleSide }));
+        objectsGroupRef.current!.add(mesh);
       } else {
-        const structuralPositionVectorsTimelineList: THREE.Vector3[] = [];
-        dataNode.points.forEach(pt => pt && structuralPositionVectorsTimelineList.push(new THREE.Vector3(pt.x, 0.5, pt.y)));
-
-        if (dataNode.type !== 'line' && dataNode.type !== 'polyline' && structuralPositionVectorsTimelineList.length > 0) {
-          structuralPositionVectorsTimelineList.push(structuralPositionVectorsTimelineList[0].clone());
-        }
-
-        if (structuralPositionVectorsTimelineList.length > 0) {
-          const targetedBufferGeometryAllocationNode = new THREE.BufferGeometry().setFromPoints(structuralPositionVectorsTimelineList);
-          const dynamicOutlinedWireframeLineMesh = new THREE.Line(targetedBufferGeometryAllocationNode, new THREE.LineBasicMaterial({ color: computationalHexColorToken, linewidth: 3, depthTest: false }));
-          dynamicOutlinedWireframeLineMesh.renderOrder = 100;
-          unifiedNodeGeometricGroup.add(dynamicOutlinedWireframeLineMesh);
-        }
-
-        // TEXT OVERLAY LAYER
-        if (dataNode.points.length >= 2) {
-          const p1 = dataNode.points[0];
-          const p2 = dataNode.points[dataNode.points.length - 1];
-          let textualMeasurementString = `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
-          
-          if (dataNode.type === 'circle' && dataNode.properties?.radius) {
-            textualMeasurementString = `R:${dataNode.properties.radius}${unit}`;
-          }
-
-          const dynamicLabelCanvasElement = document.createElement('canvas');
-          dynamicLabelCanvasElement.width = 160; dynamicLabelCanvasElement.height = 64;
-          const processingCanvasContext2D = dynamicLabelCanvasElement.getContext('2d');
-          if (processingCanvasContext2D) {
-            processingCanvasContext2D.fillStyle = '#f59e0b';
-            processingCanvasContext2D.font = 'bold 22px monospace';
-            processingCanvasContext2D.fillText(textualMeasurementString, 12, 36);
-            
-            const dynamicLabelTextureReferenceInstance = new THREE.CanvasTexture(dynamicLabelCanvasElement);
-            const geometricLabelSpriteMeshNode = new THREE.Sprite(new THREE.SpriteMaterial({ map: dynamicLabelTextureReferenceInstance, depthTest: false }));
-            geometricLabelSpriteMeshNode.position.set((p1.x + p2.x) / 2, 6, (p1.y + p2.y) / 2);
-            geometricLabelSpriteMeshNode.scale.set(22, 11, 1);
-            unifiedNodeGeometricGroup.add(geometricLabelSpriteMeshNode);
-          }
-        }
+        const pts = obj.points.map(p => new THREE.Vector3(p.x, 0.1, p.y));
+        if (obj.type !== 'line' && obj.type !== 'polyline') pts.push(pts[0].clone());
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, depthTest: false }));
+        objectsGroupRef.current!.add(line);
       }
-
-      sceneRef.current!.add(unifiedNodeGeometricGroup);
-      visualObjectsMapRef.current.set(dataNode.id, unifiedNodeGeometricGroup);
     });
-
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, [objects, selectedId]);
 
   return (
-    <div className="fixed inset-0 w-screen h-screen flex flex-col font-sans overflow-hidden select-none bg-slate-950 text-slate-100">
+    <div className="fixed inset-0 w-full h-full flex flex-col bg-slate-900 text-slate-100 overflow-hidden select-none touch-none">
       
-      {/* ACTION ROW HEADER CONFIGURATION BAR */}
-      <header className="h-14 px-4 flex items-center justify-between border-b shrink-0 z-20 bg-slate-900 border-slate-800">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-black tracking-widest text-indigo-400 uppercase">Engine_CAD Native App</span>
-        </div>
-
-        <div className="flex items-center gap-1.5 overflow-x-auto max-w-xl">
-          <button onClick={clearCanvasGridWorkspace} className="p-1 px-2 rounded bg-slate-950 text-[10px] font-bold border border-slate-800">NEW</button>
-          <button onClick={downloadSessionJSONDataBlueprint} className="p-1 px-2 rounded bg-slate-950 text-[10px] font-bold border border-slate-800 text-sky-400">SAVE AS</button>
-          <button onClick={executePDFVectorOutputPrintJob} className="p-1 px-2 rounded bg-emerald-600 text-[10px] font-bold text-white shadow">EXPORT PDF</button>
-          <button onClick={runUndoCycle} className="p-1 px-2 rounded bg-slate-800 text-[10px] font-bold">⤺ UNDO</button>
-          <button onClick={runRedoCycle} className="p-1 px-2 rounded bg-slate-800 text-[10px] font-bold">⤻ REDO</button>
-          
-          <label className="flex items-center gap-1 text-[10px] font-bold cursor-pointer bg-slate-950 px-2 py-1 rounded border border-slate-800">
-            <input type="checkbox" checked={snapToGrid} onChange={(e) => setSnapToGrid(e.target.checked)} className="accent-indigo-500" />
-            SNAP
-          </label>
-          <label className="flex items-center gap-1 text-[10px] font-bold cursor-pointer bg-slate-950 px-2 py-1 rounded border border-slate-800">
-            <input type="checkbox" checked={orthoMode} onChange={(e) => setOrthoMode(e.target.checked)} className="accent-indigo-500" />
-            ORTHO
-          </label>
+      {/* HEADER */}
+      <header className="h-12 flex items-center justify-between px-2 bg-slate-950 border-b border-slate-800 shrink-0">
+        <span className="font-bold text-xs text-indigo-400">PRO_CAD</span>
+        <div className="flex gap-1">
+          <button onClick={() => { setObjects([]); setHistory([[]]); setHistoryIndex(0); }} className="px-2 py-1 text-[10px] bg-slate-800 rounded">NEW</button>
+          <button onClick={() => window.print()} className="px-2 py-1 text-[10px] bg-emerald-600 rounded">PDF</button>
+          <button onClick={undo} className="px-2 py-1 text-[10px] bg-slate-800 rounded">UNDO</button>
+          <button onClick={redo} className="px-2 py-1 text-[10px] bg-slate-800 rounded">REDO</button>
+          <label className="text-[10px] flex items-center gap-1 bg-slate-800 px-1 rounded"><input type="checkbox" checked={snapToGrid} onChange={e => setSnapToGrid(e.target.checked)}/> SNAP</label>
         </div>
       </header>
 
-      {/* THREE.JS WORKSPACE CANVAS WRAPPER INTERFACE VIEWPORT */}
-      <div className="flex-1 flex flex-col md:flex-row relative w-full h-full min-h-0 overflow-hidden">
+      {/* MAIN LAYOUT */}
+      <div className="flex-1 flex flex-col relative w-full h-full touch-none">
         
-        {/* Absolute injection zone ensuring 100% viewport dimensions bounds protection */}
-        <main ref={containerRef} className="absolute inset-0 md:relative flex-1 w-full h-full min-h-0 bg-slate-950 touch-none z-0" style={{ minWidth: '0' }} />
+        {/* RENDERER - explicitly locking touch actions so Android doesn't swallow pointerup */}
+        <div 
+          ref={mountRef} 
+          className="absolute inset-0 w-full h-full bg-black touch-none"
+          style={{ touchAction: 'none' }} 
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp} 
+          onPointerOut={onPointerUp} 
+          onWheel={onWheel}
+        />
 
-        {/* CONTROLS MATRIX PANEL DRAWER */}
-        <aside className="absolute bottom-16 left-0 right-0 md:relative md:bottom-auto md:left-auto md:right-auto w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 bg-slate-900/95 border-slate-800 backdrop-blur-sm">
-          
-          <div className="min-w-[170px] md:min-w-0">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Vector Core Primitives</h3>
-            <div className="grid grid-cols-2 gap-1">
-              {(['select', 'pan', 'move', 'copy', 'erase', 'line', 'polyline', 'rectangle', 'triangle', 'circle'] as ToolType[]).map((tool) => (
-                <button
-                  key={tool}
-                  onClick={() => {
-                    if (tool !== 'polyline') {
-                      polylinePointsRef.current = [];
-                      setObjects(prev => prev.filter(o => o.id !== 'temp_pline'));
-                    }
-                    setCurrentTool(tool);
-                  }}
-                  className={`py-1 px-2 text-left rounded capitalize text-[10px] font-bold border ${
-                    currentTool === tool ? 'bg-indigo-600 border-indigo-500 text-white shadow' : 'bg-slate-950 border-slate-800 text-slate-300'
-                  }`}
-                >
-                  {tool}
-                </button>
-              ))}
-              {currentTool === 'polyline' && (
-                <button onClick={closePolylineNodeSequence} className="col-span-2 py-1 px-2 rounded bg-cyan-700 hover:bg-cyan-600 text-[10px] font-black text-white text-center border border-cyan-500">
-                  ✓ Close Polyline Path
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="min-w-[130px] md:min-w-0 flex flex-col gap-1 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-2 border-slate-800">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Calculated Modifiers</h3>
-            <div className="grid grid-cols-1 gap-1">
-              <button onClick={applyExtrusionLogicToNode} className="py-1 px-2 text-left rounded text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-800">⬔ Extrude 3D Node</button>
-              <button onClick={triggerDynamicFilletEdge} className="py-1 px-2 text-left rounded text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300">⤷ Curve Fillet</button>
-              <button onClick={triggerDynamicChamferEdge} className="py-1 px-2 text-left rounded text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300">⧌ Flat Chamfer</button>
-            </div>
-          </div>
-
-          <div className="min-w-[120px] md:min-w-0 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-2 border-slate-800">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Projection Formats</h3>
-            <div className="grid grid-cols-2 gap-1">
-              {(['top', 'front', 'side', 'isometric'] as ViewMode[]).map((view) => (
-                <button
-                  key={view}
-                  onClick={() => setViewMode(view)}
-                  className={`py-1 px-1 text-center rounded capitalize text-[10px] font-bold border ${
-                    viewMode === view ? 'bg-amber-600 border-amber-500 text-white shadow' : 'bg-slate-950 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  {view}
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
-
-        {/* STATUS BAR FOOTER WINDOW CONTROLLER */}
-        <footer className="absolute bottom-2 left-2 right-2 px-3 py-1.5 rounded border flex items-center justify-between backdrop-blur shadow-2xl z-20 bg-slate-900/95 border-slate-800 text-emerald-400">
-          <div className="flex items-center gap-2 font-mono text-[10px]">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="truncate max-w-[180px] sm:max-w-xs">{hudFeedback}</span>
-          </div>
-          <div className="font-mono text-[9px] text-slate-500 flex gap-2 shrink-0">
-            <span>TOOL: {currentTool.toUpperCase()}</span>
-            <span>|</span>
-            <span>NODES: {objects.length}</span>
-          </div>
-        </footer>
-
+        {/* BOTTOM TOOLBAR */}
+        <div className="absolute bottom-6 left-2 right-2 bg-slate-900/90 backdrop-blur border border-slate-700 p-2 rounded-lg flex flex-wrap gap-1 max-h-48 overflow-y-auto">
+           {(['select', 'pan', 'line', 'polyline', 'rectangle', 'triangle', 'circle', 'erase', 'extrude'] as ToolType[]).map(t => (
+            <button key={t} onClick={() => {
+              if (t !== 'polyline') { polylinePoints.current = []; setObjects(p => p.filter(o=>o.id !== 'temp_pline')); }
+              setCurrentTool(t);
+            }} className={`px-2 py-1 text-[10px] font-bold rounded uppercase ${currentTool === t ? 'bg-indigo-600' : 'bg-slate-800'}`}>
+              {t}
+            </button>
+          ))}
+          {currentTool === 'polyline' && (
+            <button onClick={() => { 
+                if(polylinePoints.current.length > 1) commitState([...state.current.objects.filter(o=>o.id !== 'temp_pline'), {id: generateId(), type: 'polyline', points: [...polylinePoints.current], color: '#06b6d4', is3D: false}]); 
+                polylinePoints.current = []; setCurrentTool('select'); 
+            }} className="px-2 py-1 text-[10px] bg-cyan-600 rounded uppercase">FINISH PATH</button>
+          )}
+          <div className="w-full h-px bg-slate-700 my-1"/>
+          {(['top', 'front', 'side', 'isometric'] as ViewMode[]).map(v => (
+            <button key={v} onClick={() => setViewMode(v)} className={`px-2 py-1 text-[10px] rounded uppercase ${viewMode === v ? 'bg-amber-600' : 'bg-slate-800'}`}>{v}</button>
+          ))}
+        </div>
+        
+        {/* STATUS FOOTER */}
+        <div className="absolute bottom-0 left-0 right-0 bg-slate-950 px-2 py-1 text-[9px] text-slate-400 flex justify-between">
+          <span>{hudFeedback}</span>
+          <span>{currentTool.toUpperCase()} | NODES: {objects.length}</span>
+        </div>
       </div>
     </div>
   );
