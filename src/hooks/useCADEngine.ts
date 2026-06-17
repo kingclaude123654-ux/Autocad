@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 // --- Type Definitions ---
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
@@ -8,8 +8,8 @@ export type CADObject = {
   id: string;
   type: string;
   geometry: THREE.BufferGeometry;
-  material: THREE.Material;
-  mesh: THREE.Mesh;
+  material: THREE.Material | THREE.Material[];
+  mesh: THREE.Mesh | THREE.Line | THREE.LineLoop;
 };
 
 export type HistoryEntry = {
@@ -74,7 +74,7 @@ export const useCADEngine = (): CADEngineHook => {
       objects: objects.map(obj => ({
         ...obj,
         geometry: obj.geometry.clone(), // Deep clone geometry
-        material: obj.material.clone(), // Deep clone material
+        material: Array.isArray(obj.material) ? obj.material.map(m => m.clone()) : obj.material.clone(), // Deep clone material
         mesh: obj.mesh.clone(), // Deep clone mesh
       })),
       selectedId,
@@ -197,8 +197,9 @@ export const useCADEngine = (): CADEngineHook => {
     shape.lineTo(p2.x, p2.y);
     shape.lineTo(p1.x, p2.y);
     shape.lineTo(p1.x, p1.y);
-    const geometry = new THREE.BufferGeometry().setFromPoints(shape.getPoints());
-    const rectangle = new THREE.Line(geometry, material);
+    const points = shape.getPoints().map(point => new THREE.Vector3(point.x, point.y, 0));
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const rectangle = new THREE.LineLoop(geometry, material); // Use LineLoop for closed shapes
     rectangle.name = `rectangle-${Date.now()}`;
     setObjects(prev => [...prev, { id: rectangle.name, type: 'rectangle', geometry, material, mesh: rectangle }]);
   }, []);
@@ -206,7 +207,14 @@ export const useCADEngine = (): CADEngineHook => {
   const drawCircle = useCallback((center: THREE.Vector3, radius: number) => {
     const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
     const geometry = new THREE.CircleGeometry(radius, 32);
-    geometry.vertices.shift(); // Remove center vertex
+    // CircleGeometry no longer has .vertices. Instead, we'll create points for the LineLoop directly.
+    const points = [];
+    const segments = 32;
+    for (let i = 0; i <= segments; i++) {
+      const theta = (i / segments) * Math.PI * 2;
+      points.push(new THREE.Vector3(center.x + radius * Math.cos(theta), center.y + radius * Math.sin(theta), center.z));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const circle = new THREE.LineLoop(geometry, material);
     circle.position.copy(center);
     circle.name = `circle-${Date.now()}`;
@@ -248,7 +256,7 @@ export const useCADEngine = (): CADEngineHook => {
             bevelEnabled: false,
           };
           const extrudedGeometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-          const extrudedMesh = new THREE.Mesh(extrudedGeometry, new THREE.MeshPhongMaterial({ color: obj.material.color }));
+          const extrudedMesh = new THREE.Mesh(extrudedGeometry, new THREE.MeshPhongMaterial({ color: (obj.material as THREE.Material).color }));
           extrudedMesh.name = obj.id;
           return { ...obj, geometry: extrudedGeometry, material: extrudedMesh.material, mesh: extrudedMesh };
         }
@@ -514,7 +522,7 @@ export const useCADEngine = (): CADEngineHook => {
     setObjects(prevObjects =>
       prevObjects.map(obj =>
         obj.id === id
-          ? { ...obj, mesh: obj.mesh.clone().scale(factor.x, factor.y, factor.z) }
+          ? { ...obj, mesh: obj.mesh.clone().scale(factor) as THREE.Object3D }
           : obj
       )
     );
@@ -635,11 +643,29 @@ export const useCADEngine = (): CADEngineHook => {
         if (cadObject) {
           // Reset material to original if not selected
           if (cadObject.id !== selectedId) {
+            // Restore original material
             child.material = cadObject.material;
           } else {
             // Apply highlight material if selected
             // This is a simplified highlight, a proper implementation might involve a custom shader or outline pass
-            child.material = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+            if (Array.isArray(child.material)) {
+              child.material = child.material.map(m => new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true }));
+            } else {
+              child.material = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+            }
+          }
+        } else if (child instanceof THREE.Line || child instanceof THREE.LineLoop) {
+          const cadObject = objects.find(o => o.id === child.name);
+          if (cadObject) {
+            if (cadObject.id !== selectedId) {
+              child.material = cadObject.material;
+            } else {
+              if (Array.isArray(child.material)) {
+                child.material = child.material.map(m => new THREE.LineBasicMaterial({ color: 0xff0000 }));
+              } else {
+                child.material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+              }
+            }
           }
         }
       }
