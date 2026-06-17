@@ -42,7 +42,6 @@ export function useCADEngine() {
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const animFrameRef = useRef<number>(0);
-  const raycasterRef = useRef(new THREE.Raycaster());
   const touchStartRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const touchMovedRef = useRef(false);
 
@@ -70,7 +69,6 @@ export function useCADEngine() {
     const w = container.clientWidth;
     const h = container.clientHeight;
 
-    // Use orthographic camera for stable 2D drawing
     const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
     camera.position.set(0, 0, 10);
     camera.lookAt(0, 0, 0);
@@ -84,7 +82,6 @@ export function useCADEngine() {
 
     scene.add(new THREE.AmbientLight(0xffffff, 1));
 
-    // Grid
     const grid = new THREE.GridHelper(20, 20, 0x555555, 0x333333);
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
@@ -133,7 +130,6 @@ export function useCADEngine() {
     const startX = touchStartRef.current.x;
     const startY = touchStartRef.current.y;
 
-    // Simple drawing on fixed plane
     const rect = rendererRef.current?.domElement.getBoundingClientRect();
     if (!rect) return;
 
@@ -219,21 +215,7 @@ export function useCADEngine() {
   }, [genId, state.activeTool]);
 
   const selectObject = useCallback((id: string | null): void => {
-    setState(prev => {
-      const prevObj = prev.selectedId ? prev.objects.find(o => o.id === prev.selectedId) : null;
-      const newObj = id ? prev.objects.find(o => o.id === id) : null;
-      
-      // Update colors
-      prev.objects.forEach(o => {
-        if (o.mesh instanceof THREE.Mesh) {
-          const mat = o.mesh.material as THREE.MeshStandardMaterial;
-          if (o.id === prev.selectedId) mat.color.set(0x4a90e2);
-          if (o.id === id) mat.color.set(0xe94560);
-        }
-      });
-
-      return { ...prev, selectedId: id };
-    });
+    setState(prev => ({ ...prev, selectedId: id }));
   }, []);
 
   const setTool = useCallback((t: ToolType): void => {
@@ -320,25 +302,14 @@ export function useCADEngine() {
   }, []);
 
   useEffect(() => {
-    const c = rendererRef.current?.domElement;
-    if (c) {
-      c.addEventListener('touchstart', handleTouchStart, { passive: false });
-      c.addEventListener('touchmove', handleTouchMove, { passive: false });
-      c.addEventListener('touchend', handleTouchEnd, { passive: false });
-    }
     window.addEventListener('resize', handleResize);
     return () => {
-      if (c) {
-        c.removeEventListener('touchstart', handleTouchStart);
-        c.removeEventListener('touchmove', handleTouchMove);
-        c.removeEventListener('touchend', handleTouchEnd);
-      }
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animFrameRef.current);
       rendererRef.current?.dispose();
       rendererRef.current?.domElement.remove();
     };
-  }, [handleTouchStart, handleTouchMove, handleTouchEnd, handleResize]);
+  }, [handleResize]);
 
   return {
     state,
@@ -348,5 +319,8 @@ export function useCADEngine() {
     selectObject,
     executeExtrude,
     executeErase,
+    handleTouchStart,
+    handleTouchMove,
+    handleTouchEnd,
   };
 }
