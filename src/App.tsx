@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useCADEngine, ViewMode } from './useCADEngine';
+import { useCADEngine } from './hooks/useCADEngine';
+
 import * as THREE from 'three';
 
 const App: React.FC = () => {
@@ -171,7 +172,7 @@ const App: React.FC = () => {
           <p>Selected: {selectedId || 'None'}</p>
           <p>Objects:</p>
           <ul>
-            {objects.map(obj => (
+            {objects.map((obj: { id: string; type: string; }) => (
               <li key={obj.id} onClick={() => selectObject(obj.id)} style={{ cursor: 'pointer', fontWeight: obj.id === selectedId ? 'bold' : 'normal' }}>
                 {obj.type} - {obj.id.substring(0, 8)}
               </li>
