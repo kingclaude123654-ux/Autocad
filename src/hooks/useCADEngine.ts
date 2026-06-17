@@ -2,7 +2,6 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-// Types
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
 export type ToolType = 'line' | 'polyline' | 'rectangle' | 'circle' | 'move' | 'select' | 'extrude' | 'fillet' | 'trim' | 'extend' | 'rotate' | 'offset' | 'scale' | 'union' | 'subtract' | 'erase';
 
@@ -120,15 +119,12 @@ export const useCADEngine = () => {
     let lastTime = 0;
     const animate = (time: number): void => {
       animationFrameRef.current = requestAnimationFrame(animate);
-      
       const deltaTime = time - lastTime;
       if (deltaTime < 32) return;
       lastTime = time;
-      
       if (controlsRef.current) {
         controlsRef.current.update();
       }
-      
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
       }
@@ -136,64 +132,57 @@ export const useCADEngine = () => {
     animate(0);
   }, []);
 
+  const disposeMaterial = useCallback((material: THREE.Material): void => {
+    if (material instanceof THREE.MeshStandardMaterial) {
+      if (material.map) material.map.dispose();
+      if (material.normalMap) material.normalMap.dispose();
+      if (material.roughnessMap) material.roughnessMap.dispose();
+      if (material.metalnessMap) material.metalnessMap.dispose();
+      if (material.aoMap) material.aoMap.dispose();
+      if (material.emissiveMap) material.emissiveMap.dispose();
+      if (material.bumpMap) material.bumpMap.dispose();
+    }
+    material.dispose();
+  }, []);
+
+  const disposeObject = useCallback((obj: THREE.Object3D): void => {
+    obj.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh) {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m: THREE.Material) => disposeMaterial(m));
+          } else {
+            disposeMaterial(child.material);
+          }
+        }
+      }
+      if (child instanceof THREE.Line) {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((m: THREE.Material) => m.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      }
+    });
+  }, [disposeMaterial]);
+
   const cleanupMemory = useCallback((): void => {
     if (!sceneRef.current) return;
-
-    const disposeMaterial = (material: THREE.Material): void => {
-      if (material instanceof THREE.MeshStandardMaterial) {
-        if (material.map) material.map.dispose();
-        if (material.normalMap) material.normalMap.dispose();
-        if (material.roughnessMap) material.roughnessMap.dispose();
-        if (material.metalnessMap) material.metalnessMap.dispose();
-        if (material.aoMap) material.aoMap.dispose();
-        if (material.emissiveMap) material.emissiveMap.dispose();
-        if (material.bumpMap) material.bumpMap.dispose();
-      }
-      material.dispose();
-    };
-
-    const disposeObject = (obj: THREE.Object3D): void => {
-      obj.traverse((child: THREE.Object3D) => {
-        if (child instanceof THREE.Mesh) {
-          if (child.geometry) {
-            child.geometry.dispose();
-          }
-          if (child.material) {
-            if (Array.isArray(child.material)) {
-              child.material.forEach((m: THREE.Material) => disposeMaterial(m));
-            } else {
-              disposeMaterial(child.material);
-            }
-          }
-        }
-        if (child instanceof THREE.Line) {
-          if (child.geometry) {
-            child.geometry.dispose();
-          }
-          if (child.material) {
-            if (Array.isArray(child.material)) {
-              child.material.forEach((m: THREE.Material) => m.dispose());
-            } else {
-              child.material.dispose();
-            }
-          }
-        }
-      });
-    };
-
     state.objects.forEach((obj: CADObject) => {
       if (obj.mesh) {
         disposeObject(obj.mesh);
         sceneRef.current?.remove(obj.mesh);
       }
     });
-
     if (tempLineRef.current) {
       disposeObject(tempLineRef.current);
       sceneRef.current.remove(tempLineRef.current);
       tempLineRef.current = null;
     }
-
     setState((prev: CADEngineState): CADEngineState => ({
       ...prev,
       objects: [],
@@ -201,7 +190,7 @@ export const useCADEngine = () => {
       drawingPoints: [],
       isDrawing: false,
     }));
-  }, [state.objects]);
+  }, [state.objects, disposeObject]);
 
   const saveToHistory = useCallback((objects: CADObject[], selectedId: string | null): void => {
     setState((prev: CADEngineState): CADEngineState => {
@@ -217,17 +206,14 @@ export const useCADEngine = () => {
         scale: obj.scale.clone(),
         createdAt: obj.createdAt,
       }));
-      
       newHistory.push({
         objects: clonedObjects,
         selectedId,
         timestamp: Date.now(),
       });
-
       if (newHistory.length > 30) {
         newHistory.shift();
       }
-
       return {
         ...prev,
         history: newHistory,
@@ -239,22 +225,18 @@ export const useCADEngine = () => {
   const undo = useCallback((): void => {
     setState((prev: CADEngineState): CADEngineState => {
       if (prev.historyIndex <= 0) return prev;
-
       const newIndex = prev.historyIndex - 1;
       const historyItem = prev.history[newIndex];
-
       prev.objects.forEach((obj: CADObject) => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.remove(obj.mesh);
         }
       });
-
       historyItem.objects.forEach((obj: CADObject) => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.add(obj.mesh);
         }
       });
-
       return {
         ...prev,
         objects: historyItem.objects,
@@ -267,22 +249,18 @@ export const useCADEngine = () => {
   const redo = useCallback((): void => {
     setState((prev: CADEngineState): CADEngineState => {
       if (prev.historyIndex >= prev.history.length - 1) return prev;
-
       const newIndex = prev.historyIndex + 1;
       const historyItem = prev.history[newIndex];
-
       prev.objects.forEach((obj: CADObject) => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.remove(obj.mesh);
         }
       });
-
       historyItem.objects.forEach((obj: CADObject) => {
         if (obj.mesh && sceneRef.current) {
           sceneRef.current.add(obj.mesh);
         }
       });
-
       return {
         ...prev,
         objects: historyItem.objects,
@@ -296,7 +274,7 @@ export const useCADEngine = () => {
     return 'obj_' + Date.now().toString() + '_' + Math.random().toString(36).substring(2, 11);
   }, []);
 
-  const getGeometry = (mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.BufferGeometry => {
+  const getGeometry = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.BufferGeometry => {
     if (mesh instanceof THREE.Group) {
       const child = mesh.children[0];
       if (child instanceof THREE.Mesh) {
@@ -305,9 +283,9 @@ export const useCADEngine = () => {
       return new THREE.BufferGeometry();
     }
     return mesh.geometry;
-  };
+  }, []);
 
-  const getMaterial = (mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.Material | THREE.Material[] => {
+  const getMaterial = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group): THREE.Material | THREE.Material[] => {
     if (mesh instanceof THREE.Group) {
       const child = mesh.children[0];
       if (child instanceof THREE.Mesh) {
@@ -316,7 +294,7 @@ export const useCADEngine = () => {
       return new THREE.MeshStandardMaterial();
     }
     return mesh.material;
-  };
+  }, []);
 
   const createCADObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): CADObject => {
     return {
@@ -330,11 +308,10 @@ export const useCADEngine = () => {
       scale: mesh.scale.clone(),
       createdAt: Date.now(),
     };
-  }, [generateId]);
+  }, [generateId, getGeometry, getMaterial]);
 
   const addObject = useCallback((mesh: THREE.Mesh | THREE.Line | THREE.Group, type: ToolType): void => {
     const cadObject = createCADObject(mesh, type);
-    
     setState((prev: CADEngineState): CADEngineState => {
       const newObjects: CADObject[] = [...prev.objects, cadObject];
       saveToHistory(newObjects, prev.selectedId);
@@ -343,7 +320,6 @@ export const useCADEngine = () => {
         objects: newObjects,
       };
     });
-
     if (sceneRef.current) {
       sceneRef.current.add(mesh);
     }
@@ -352,8 +328,8 @@ export const useCADEngine = () => {
   const selectObject = useCallback((id: string | null): void => {
     setState((prev: CADEngineState): CADEngineState => {
       if (prev.selectedId) {
-        const prevObj: CADObject | undefined = prev.objects.find((o: CADObject): boolean => o.id === prev.selectedId);
-        if (prevObj?.mesh instanceof THREE.Mesh) {
+        const prevObj = prev.objects.find((o: CADObject): boolean => o.id === prev.selectedId);
+        if (prevObj && prevObj.mesh instanceof THREE.Mesh) {
           const mat = prevObj.mesh.material;
           if (mat instanceof THREE.MeshStandardMaterial) {
             mat.emissive.set(0x000000);
@@ -361,10 +337,9 @@ export const useCADEngine = () => {
           }
         }
       }
-
       if (id) {
-        const newObj: CADObject | undefined = prev.objects.find((o: CADObject): boolean => o.id === id);
-        if (newObj?.mesh instanceof THREE.Mesh) {
+        const newObj = prev.objects.find((o: CADObject): boolean => o.id === id);
+        if (newObj && newObj.mesh instanceof THREE.Mesh) {
           const mat = newObj.mesh.material;
           if (mat instanceof THREE.MeshStandardMaterial) {
             mat.emissive.set(0x444444);
@@ -372,7 +347,6 @@ export const useCADEngine = () => {
           }
         }
       }
-
       return {
         ...prev,
         selectedId: id,
@@ -382,10 +356,8 @@ export const useCADEngine = () => {
 
   const syncCameraMatrix = useCallback((viewMode: ViewMode): void => {
     if (!cameraRef.current || !controlsRef.current) return;
-
     const target = new THREE.Vector3(0, 0, 0);
     const position = new THREE.Vector3();
-
     switch (viewMode) {
       case 'top':
         position.set(0, 8, 0);
@@ -400,11 +372,9 @@ export const useCADEngine = () => {
         position.set(6, 6, 6);
         break;
     }
-
     cameraRef.current.position.copy(position);
     controlsRef.current.target.copy(target);
     controlsRef.current.update();
-
     setState((prev: CADEngineState): CADEngineState => ({
       ...prev,
       viewMode,
@@ -413,19 +383,15 @@ export const useCADEngine = () => {
 
   const toggleOrthoMode = useCallback((): void => {
     if (!cameraRef.current || !rendererRef.current) return;
-
     const container = rendererRef.current.domElement.parentElement;
     if (!container) return;
-
     const width = container.clientWidth;
     const height = container.clientHeight;
     const aspect = width / height;
-
     setState((prev: CADEngineState): CADEngineState => {
       const newOrthoMode = !prev.orthoMode;
       const currentPos = cameraRef.current!.position.clone();
       const currentRot = cameraRef.current!.rotation.clone();
-      
       if (newOrthoMode) {
         const frustumSize = 8;
         const orthoCamera = new THREE.OrthographicCamera(
@@ -445,7 +411,6 @@ export const useCADEngine = () => {
         perspectiveCamera.rotation.copy(currentRot);
         cameraRef.current = perspectiveCamera;
       }
-
       return {
         ...prev,
         orthoMode: newOrthoMode,
@@ -455,33 +420,26 @@ export const useCADEngine = () => {
 
   const screenToWorld = useCallback((x: number, y: number): THREE.Vector3 | null => {
     if (!cameraRef.current || !rendererRef.current) return null;
-
     const rect = rendererRef.current.domElement.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((x - rect.left) / rect.width) * 2 - 1,
       -((y - rect.top) / rect.height) * 2 + 1
     );
-
     raycasterRef.current.setFromCamera(mouse, cameraRef.current);
-    
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const intersection = new THREE.Vector3();
     const result = raycasterRef.current.ray.intersectPlane(plane, intersection);
-    
     return result ? intersection : null;
   }, []);
 
   const handleObjectSelection = useCallback((x: number, y: number): void => {
     if (!cameraRef.current || !sceneRef.current || !rendererRef.current) return;
-
     const rect = rendererRef.current.domElement.getBoundingClientRect();
     const mouse = new THREE.Vector2(
       ((x - rect.left) / rect.width) * 2 - 1,
       -((y - rect.top) / rect.height) * 2 + 1
     );
-
     raycasterRef.current.setFromCamera(mouse, cameraRef.current);
-    
     const meshes: THREE.Object3D[] = [];
     state.objects.forEach((obj: CADObject) => {
       if (obj.mesh instanceof THREE.Mesh || obj.mesh instanceof THREE.Line) {
@@ -494,13 +452,10 @@ export const useCADEngine = () => {
         });
       }
     });
-
     const intersects = raycasterRef.current.intersectObjects(meshes, true);
-    
     if (intersects.length > 0) {
       const intersectedObject = intersects[0].object;
       let foundId: string | null = null;
-
       for (const obj of state.objects) {
         if (obj.mesh === intersectedObject) {
           foundId = obj.id;
@@ -518,7 +473,6 @@ export const useCADEngine = () => {
           if (foundId) break;
         }
       }
-
       selectObject(foundId);
     } else {
       selectObject(null);
@@ -533,7 +487,6 @@ export const useCADEngine = () => {
       y: touch.clientY,
       time: Date.now(),
     };
-
     if (state.activeTool === 'select') {
       handleObjectSelection(touch.clientX, touch.clientY);
     } else if (['line', 'polyline', 'rectangle', 'circle'].includes(state.activeTool)) {
@@ -551,10 +504,8 @@ export const useCADEngine = () => {
   const handleTouchMove = useCallback((event: TouchEvent): void => {
     event.preventDefault();
     if (!state.isDrawing) return;
-
     const touch = event.touches[0];
     const point = screenToWorld(touch.clientX, touch.clientY);
-    
     if (point && state.drawingPoints.length > 0) {
       if (tempLineRef.current && sceneRef.current) {
         sceneRef.current.remove(tempLineRef.current);
@@ -564,7 +515,6 @@ export const useCADEngine = () => {
         }
         tempLineRef.current = null;
       }
-
       const points = [...state.drawingPoints, point];
       if (state.activeTool === 'line' && points.length >= 2) {
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
@@ -587,7 +537,6 @@ export const useCADEngine = () => {
 
   const createPolyline = useCallback((points: THREE.Vector3[]): void => {
     if (points.length < 2) return;
-    
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
     const polyline = new THREE.Line(geometry, material);
@@ -596,17 +545,14 @@ export const useCADEngine = () => {
 
   const handleTouchEnd = useCallback((event: TouchEvent): void => {
     event.preventDefault();
-    
     if (state.isDrawing) {
       const touchDuration = Date.now() - touchStartRef.current.time;
-      
       if (touchDuration < 300 && state.drawingPoints.length > 1) {
         if (state.activeTool === 'line' && state.drawingPoints.length >= 2) {
           createLine(state.drawingPoints[0], state.drawingPoints[1]);
         } else if (state.activeTool === 'polyline' && state.drawingPoints.length >= 3) {
           createPolyline(state.drawingPoints);
         }
-        
         if (tempLineRef.current && sceneRef.current) {
           sceneRef.current.remove(tempLineRef.current);
           tempLineRef.current.geometry.dispose();
@@ -615,7 +561,6 @@ export const useCADEngine = () => {
           }
           tempLineRef.current = null;
         }
-        
         setState((prev: CADEngineState): CADEngineState => ({
           ...prev,
           isDrawing: false,
@@ -632,7 +577,6 @@ export const useCADEngine = () => {
     shape.lineTo(width / 2, height / 2);
     shape.lineTo(-width / 2, height / 2);
     shape.closePath();
-
     const geometry = new THREE.ShapeGeometry(shape);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x4a90e2, 
@@ -662,17 +606,14 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
-
       const shapeGeometry = obj.mesh.geometry;
       const extrudeSettings: THREE.ExtrudeGeometryOptions = {
         steps: 1,
         depth: distance,
         bevelEnabled: false,
       };
-
       const shape = new THREE.Shape();
       const positionAttribute = shapeGeometry.getAttribute('position');
-      
       if (positionAttribute.count > 2) {
         const points: THREE.Vector2[] = [];
         for (let i = 0; i < positionAttribute.count; i++) {
@@ -681,27 +622,21 @@ export const useCADEngine = () => {
             positionAttribute.getY(i)
           ));
         }
-        
         shape.moveTo(points[0].x, points[0].y);
         for (let i = 1; i < points.length; i++) {
           shape.lineTo(points[i].x, points[i].y);
         }
         shape.closePath();
       }
-
       const extrudeGeometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-      
       if (sceneRef.current) {
         sceneRef.current.remove(obj.mesh);
       }
-      
       obj.mesh.geometry.dispose();
       obj.mesh.geometry = extrudeGeometry;
-      
       if (sceneRef.current) {
         sceneRef.current.add(obj.mesh);
       }
-
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -711,12 +646,10 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
-
       const shape = new THREE.Shape();
       const width = 2;
       const height = 2;
       const r = Math.min(radius, width / 2, height / 2);
-
       shape.moveTo(-width / 2 + r, -height / 2);
       shape.lineTo(width / 2 - r, -height / 2);
       shape.quadraticCurveTo(width / 2, -height / 2, width / 2, -height / 2 + r);
@@ -726,20 +659,15 @@ export const useCADEngine = () => {
       shape.quadraticCurveTo(-width / 2, height / 2, -width / 2, height / 2 - r);
       shape.lineTo(-width / 2, -height / 2 + r);
       shape.quadraticCurveTo(-width / 2, -height / 2, -width / 2 + r, -height / 2);
-
       const newGeometry = new THREE.ShapeGeometry(shape);
-      
       if (sceneRef.current) {
         sceneRef.current.remove(obj.mesh);
       }
-      
       obj.mesh.geometry.dispose();
       obj.mesh.geometry = newGeometry;
-      
       if (sceneRef.current) {
         sceneRef.current.add(obj.mesh);
       }
-
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -749,27 +677,21 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const targetObj = prev.objects.find((o: CADObject): boolean => o.id === targetId);
       const cuttingObj = prev.objects.find((o: CADObject): boolean => o.id === cuttingId);
-      
       if (!targetObj || !cuttingObj) return prev;
       if (!(targetObj.mesh instanceof THREE.Mesh) || !(cuttingObj.mesh instanceof THREE.Mesh)) return prev;
-
       const targetBox = new THREE.Box3().setFromObject(targetObj.mesh);
       const cuttingBox = new THREE.Box3().setFromObject(cuttingObj.mesh);
-      
       if (targetBox.intersectsBox(cuttingBox)) {
         const intersection = new THREE.Box3();
         intersection.copy(targetBox).intersect(cuttingBox);
-        
         const newGeometry = new THREE.BoxGeometry(
           targetBox.max.x - targetBox.min.x - (intersection.max.x - intersection.min.x),
           targetBox.max.y - targetBox.min.y - (intersection.max.y - intersection.min.y),
           targetBox.max.z - targetBox.min.z
         );
-        
         if (sceneRef.current) {
           sceneRef.current.remove(targetObj.mesh);
         }
-        
         targetObj.mesh.geometry.dispose();
         targetObj.mesh.geometry = newGeometry;
         targetObj.mesh.position.set(
@@ -777,12 +699,10 @@ export const useCADEngine = () => {
           targetBox.min.y + (intersection.max.y - intersection.min.y) / 2,
           targetBox.min.z
         );
-        
         if (sceneRef.current) {
           sceneRef.current.add(targetObj.mesh);
         }
       }
-
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -792,28 +712,22 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj || !(obj.mesh instanceof THREE.Mesh)) return prev;
-
       const box = new THREE.Box3().setFromObject(obj.mesh);
       const size = new THREE.Vector3();
       box.getSize(size);
-      
       const newGeometry = new THREE.BoxGeometry(
         size.x + amount,
         size.y + amount,
         size.z
       );
-      
       if (sceneRef.current) {
         sceneRef.current.remove(obj.mesh);
       }
-      
       obj.mesh.geometry.dispose();
       obj.mesh.geometry = newGeometry;
-      
       if (sceneRef.current) {
         sceneRef.current.add(obj.mesh);
       }
-
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -823,7 +737,6 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj) return prev;
-
       switch (axis) {
         case 'x':
           obj.mesh.rotation.x += angle;
@@ -835,7 +748,6 @@ export const useCADEngine = () => {
           obj.mesh.rotation.z += angle;
           break;
       }
-
       obj.rotation = obj.mesh.rotation.clone();
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
@@ -846,14 +758,11 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj) return prev;
-
       const direction = new THREE.Vector3(0, 0, 1);
       direction.applyQuaternion(obj.mesh.quaternion);
       direction.normalize();
-      
       obj.mesh.position.add(direction.multiplyScalar(distance));
       obj.position = obj.mesh.position.clone();
-      
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -863,10 +772,8 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj) return prev;
-
       obj.mesh.scale.set(scaleX, scaleY, scaleZ);
       obj.scale = obj.mesh.scale.clone();
-      
       saveToHistory(prev.objects, prev.selectedId);
       return { ...prev };
     });
@@ -875,27 +782,21 @@ export const useCADEngine = () => {
   const executeUnion = useCallback((objectIds: string[]): void => {
     setState((prev: CADEngineState): CADEngineState => {
       if (objectIds.length < 2) return prev;
-
       const objects = prev.objects.filter((o: CADObject): boolean => objectIds.includes(o.id));
       if (objects.length < 2) return prev;
-
       const group = new THREE.Group();
-      
       objects.forEach((obj: CADObject) => {
         if (sceneRef.current) {
           sceneRef.current.remove(obj.mesh);
         }
         group.add(obj.mesh.clone());
       });
-
       const newObjects = prev.objects.filter((o: CADObject): boolean => !objectIds.includes(o.id));
       const cadObject = createCADObject(group, 'union');
       newObjects.push(cadObject);
-      
       if (sceneRef.current) {
         sceneRef.current.add(group);
       }
-
       saveToHistory(newObjects, prev.selectedId);
       return {
         ...prev,
@@ -907,13 +808,10 @@ export const useCADEngine = () => {
   const executeSubtract = useCallback((targetId: string, subtractId: string): void => {
     setState((prev: CADEngineState): CADEngineState => {
       const subtractObj = prev.objects.find((o: CADObject): boolean => o.id === subtractId);
-      
       if (!subtractObj) return prev;
-
       if (sceneRef.current) {
         sceneRef.current.remove(subtractObj.mesh);
       }
-      
       if (subtractObj.mesh instanceof THREE.Mesh || subtractObj.mesh instanceof THREE.Line) {
         subtractObj.mesh.geometry.dispose();
         if (Array.isArray(subtractObj.mesh.material)) {
@@ -922,10 +820,8 @@ export const useCADEngine = () => {
           (subtractObj.mesh.material as THREE.Material).dispose();
         }
       }
-
       const newObjects = prev.objects.filter((o: CADObject): boolean => o.id !== subtractId);
       saveToHistory(newObjects, prev.selectedId);
-      
       return {
         ...prev,
         objects: newObjects,
@@ -938,11 +834,9 @@ export const useCADEngine = () => {
     setState((prev: CADEngineState): CADEngineState => {
       const obj = prev.objects.find((o: CADObject): boolean => o.id === objectId);
       if (!obj) return prev;
-
       if (sceneRef.current) {
         sceneRef.current.remove(obj.mesh);
       }
-      
       if (obj.mesh instanceof THREE.Mesh || obj.mesh instanceof THREE.Line) {
         obj.mesh.geometry.dispose();
         if (Array.isArray(obj.mesh.material)) {
@@ -951,12 +845,9 @@ export const useCADEngine = () => {
           (obj.mesh.material as THREE.Material).dispose();
         }
       }
-
       const newObjects = prev.objects.filter((o: CADObject): boolean => o.id !== objectId);
       const newSelectedId = prev.selectedId === objectId ? null : prev.selectedId;
-      
       saveToHistory(newObjects, newSelectedId);
-      
       return {
         ...prev,
         objects: newObjects,
@@ -967,13 +858,10 @@ export const useCADEngine = () => {
 
   const handleResize = useCallback((): void => {
     if (!cameraRef.current || !rendererRef.current) return;
-
     const container = rendererRef.current.domElement.parentElement;
     if (!container) return;
-
     const width = container.clientWidth;
     const height = container.clientHeight;
-
     if (cameraRef.current instanceof THREE.PerspectiveCamera) {
       cameraRef.current.aspect = width / height;
       cameraRef.current.updateProjectionMatrix();
@@ -986,7 +874,6 @@ export const useCADEngine = () => {
       cameraRef.current.bottom = frustumSize / -2;
       cameraRef.current.updateProjectionMatrix();
     }
-
     rendererRef.current.setSize(width, height);
   }, []);
 
@@ -1004,14 +891,13 @@ export const useCADEngine = () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      cleanupMemory();
       if (rendererRef.current) {
         rendererRef.current.dispose();
         rendererRef.current.forceContextLoss();
         rendererRef.current.domElement.remove();
       }
     };
-  }, [cleanupMemory]);
+  }, []);
 
   return {
     state,
