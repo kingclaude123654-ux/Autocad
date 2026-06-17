@@ -1,4 +1,3 @@
-// src/App.tsx
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { useCADEngine } from './hooks/useCADEngine';
 
@@ -23,5 +22,14 @@ const App: React.FC = () => {
   const { state, initScene, undo, redo, lockView, toggleOrthoMode, setSnapEnabled, setGridVisible, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene } = e;
   const [ui, setUi] = useState(true);
 
-  useEffect(() => { if (ref.current) initScene(ref.current); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, [initScene, handleResize]);
-  useEffect(() => { const c = ref.current; if (!c) return; c.addEventListener('touchstart', handleTouchStart, { passive: false }); c.addEventListener('touchmove', handleTouchMove, { passive: false }); c.addEventListener('touchend', handleTouchEnd, { passive: false }); return () => { c.removeEventListener('touchstart', handleTouchStart); c.removeEventListener('touchmove', handleTouchMove); c.removeEventListener('touchend', handleTouchEnd); }; }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
+  useEffect(() => {
+    if (ref.current) initScene(ref.current);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [initScene, handleResize]);
+
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    c.addEventListener('touchstart', handleTouchStart, { passive: false });
+    c.addEventListener('touchmove', handleTouchMove,
