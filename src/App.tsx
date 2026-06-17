@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useCADEngine } from './hooks/useCADEngine';
 
 const S = {
@@ -38,11 +38,24 @@ const S = {
 const App: React.FC = () => {
   const ref = useRef<HTMLDivElement>(null);
   const e = useCADEngine();
-  const { state, initScene, setTool, setView, selectObject, executeExtrude, executeErase } = e;
+  const { state, initScene, setTool, setView, handleTouchStart, handleTouchMove, handleTouchEnd, executeExtrude, executeErase } = e;
 
   useEffect(() => {
     if (ref.current) initScene(ref.current);
-  }, [initScene]);
+    const c = ref.current;
+    if (c) {
+      c.addEventListener('touchstart', handleTouchStart, { passive: false });
+      c.addEventListener('touchmove', handleTouchMove, { passive: false });
+      c.addEventListener('touchend', handleTouchEnd, { passive: false });
+    }
+    return () => {
+      if (c) {
+        c.removeEventListener('touchstart', handleTouchStart);
+        c.removeEventListener('touchmove', handleTouchMove);
+        c.removeEventListener('touchend', handleTouchEnd);
+      }
+    };
+  }, [initScene, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   return (
     <div style={S.app}>
