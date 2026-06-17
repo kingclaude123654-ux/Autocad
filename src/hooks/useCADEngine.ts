@@ -1,222 +1,362 @@
-import React, { useEffect, useState } from 'react';
-import { useCADEngine } from './hooks/useCADEngine';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-const App: React.FC = () => {
-  const { 
-    canvasRef, 
-    objects, 
-    selectedId, 
-    orthoMode, 
-    setOrthoMode, 
-    setViewMode, 
-    drawLine, 
-    drawPolyline, 
-    drawRectangle, 
-    drawCircle, 
-    selectObject, 
-    moveObject, 
-    executeExtrude, 
-    executeFillet, 
-    executeTrim, 
-    executeExtend, 
-    executeRotate, 
-    executeOffset, 
-    executeScale, 
-    executeUnion, 
-    executeSubtract, 
-    executeErase, 
-    undo, 
-    redo 
-  } = useCADEngine();
+// --- Type Definitions ---
+export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
+export type DrawingMode = 'none' | 'line' | 'polyline' | 'rectangle' | 'circle';
 
-  const [extrudeDepth, setExtrudeDepth] = useState<number>(10);
-  const [filletRadius, setFilletRadius] = useState<number>(5);
-  const [offsetDistance, setOffsetDistance] = useState<number>(5);
-  const [rotateAngle, setRotateAngle] = useState<number>(Math.PI / 4);
-  const [scaleFactor, setScaleFactor] = useState<number>(1.5);
-  const [objectId1, setObjectId1] = useState<string>('');
-  const [objectId2, setObjectId2] = useState<string>('');
+export interface CADObject {
+  id: string;
+  type: string;
+  geometry: THREE.BufferGeometry;
+  material: any;
+  mesh: any;
+}
+
+export interface HistoryEntry {
+  objects: CADObject[];
+  selectedId: string | null;
+}
+
+export interface CADEngineHook {
+  objects: CADObject[];
+  selectedId: string | null;
+  viewMode: ViewMode;
+  orthoMode: boolean;
+  drawingMode: DrawingMode;
+  canvasRef: React.RefObject<HTMLDivElement>;
+  setOrthoMode: (mode: boolean) => void;
+  setViewMode: (mode: ViewMode) => void;
+  setDrawingMode: (mode: DrawingMode) => void;
+  drawLine: (start: THREE.Vector3, end: THREE.Vector3) => void;
+  drawPolyline: (points: THREE.Vector3[]) => void;
+  drawRectangle: (p1: THREE.Vector3, p2: THREE.Vector3) => void;
+  drawCircle: (center: THREE.Vector3, radius: number) => void;
+  selectObject: (id: string | null) => void;
+  moveObject: (id: string, delta: THREE.Vector3) => void;
+  copyObject: (id: string) => void;
+  executeExtrude: (id: string, depth: number) => void;
+  executeFillet: (id: string, radius: number) => void;
+  executeTrim: (id: string, cuttingId: string) => void;
+  executeExtend: (id: string, targetId: string) => void;
+  executeRotate: (id: string, axis: THREE.Vector3, angle: number) => void;
+  executeOffset: (id: string, distance: number) => void;
+  executeScale: (id: string, factor: THREE.Vector3) => void;
+  executeUnion: (id1: string, id2: string) => void;
+  executeSubtract: (id1: string, id2: string) => void;
+  executeErase: (id: string) => void;
+  undo: () => void;
+  redo: () => void;
+  cleanupMemory: () => void;
+  exportToPDF: () => void;
+}
+
+export const useCADEngine = (): CADEngineHook => {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const scene = useRef(new THREE.Scene());
+  const renderer = useRef<THREE.WebGLRenderer | null>(null);
+  const camera = useRef<THREE.PerspectiveCamera | THREE.OrthographicCamera | null>(null);
+  const controls = useRef<OrbitControls | null>(null);
+  const raycaster = useRef(new THREE.Raycaster());
+  const mouse = useRef(new THREE.Vector2());
+
+  const [objects, setObjects] = useState<CADObject[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('isometric');
+  const [orthoMode, setOrthoMode] = useState<boolean>(false);
+  const [drawingMode, setDrawingMode] = useState<DrawingMode>('none');
+  const [drawingPoints, setDrawingPoints] = useState<THREE.Vector3[]>([]);
+
+  const history = useRef<HistoryEntry[]>([]);
+  const historyPointer = useRef<number>(-1);
+
+  const saveState = useCallback(() => {
+    const newState: HistoryEntry = {
+      objects: objects.map(obj => ({
+        ...obj,
+        geometry: obj.geometry.clone(),
+        material: Array.isArray(obj.material) ? obj.material.map((m: any) => m.clone()) : obj.material.clone(),
+        mesh: obj.mesh.clone(),
+      })),
+      selectedId,
+    };
+    history.current = history.current.slice(0, historyPointer.current + 1);
+    history.current.push(newState);
+    historyPointer.current = history.current.length - 1;
+  }, [objects, selectedId]);
+
+  const undo = useCallback(() => {
+    if (historyPointer.current > 0) {
+      historyPointer.current--;
+      const prevState = history.current[historyPointer.current];
+      setObjects(prevState.objects);
+      setSelectedId(prevState.selectedId);
+    }
+  }, []);
+
+  const redo = useCallback(() => {
+    if (historyPointer.current < history.current.length - 1) {
+      historyPointer.current++;
+      const nextState = history.current[historyPointer.current];
+      setObjects(nextState.objects);
+      setSelectedId(nextState.selectedId);
+    }
+  }, []);
+
+  const cleanupMemory = useCallback(() => {
+    scene.current.traverse((object: any) => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material) {
+        if (Array.isArray(object.material)) {
+          object.material.forEach((m: any) => m.dispose());
+        } else {
+          object.material.dispose();
+        }
+      }
+    });
+    renderer.current?.dispose();
+  }, []);
+
+  const syncCameraMatrix = useCallback(() => {
+    if (!canvasRef.current || !renderer.current) return;
+    const width = canvasRef.current.clientWidth;
+    const height = canvasRef.current.clientHeight;
+    const aspect = width / height;
+    const frustumSize = 100;
+
+    let newCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+    if (orthoMode) {
+      newCamera = new THREE.OrthographicCamera(frustumSize * aspect / -2, frustumSize * aspect / 2, frustumSize / 2, frustumSize / -2, 0.1, 1000);
+    } else {
+      newCamera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+    }
+
+    switch (viewMode) {
+      case 'top': newCamera.position.set(0, 100, 0); newCamera.up.set(0, 0, 1); break;
+      case 'front': newCamera.position.set(0, 0, 100); newCamera.up.set(0, 1, 0); break;
+      case 'side': newCamera.position.set(100, 0, 0); newCamera.up.set(0, 1, 0); break;
+      default: newCamera.position.set(100, 100, 100); newCamera.up.set(0, 1, 0); break;
+    }
+    newCamera.lookAt(0, 0, 0);
+    newCamera.updateProjectionMatrix();
+    camera.current = newCamera;
+    if (controls.current) {
+      controls.current.object = newCamera;
+      controls.current.update();
+    }
+  }, [orthoMode, viewMode]);
+
+  const drawLine = useCallback((start: THREE.Vector3, end: THREE.Vector3) => {
+    const material = new THREE.LineBasicMaterial({ color: 0x0000ff });
+    const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+    const line = new THREE.Line(geometry, material);
+    line.name = `line-${Date.now()}`;
+    setObjects(prev => [...prev, { id: line.name, type: 'line', geometry, material, mesh: line }]);
+  }, []);
+
+  const drawPolyline = useCallback((points: THREE.Vector3[]) => {
+    const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const polyline = new THREE.Line(geometry, material);
+    polyline.name = `polyline-${Date.now()}`;
+    setObjects(prev => [...prev, { id: polyline.name, type: 'polyline', geometry, material, mesh: polyline }]);
+  }, []);
+
+  const drawRectangle = useCallback((p1: THREE.Vector3, p2: THREE.Vector3) => {
+    const material = new THREE.LineBasicMaterial({ color: 0xff00ff });
+    const points = [new THREE.Vector3(p1.x, p1.y, 0), new THREE.Vector3(p2.x, p1.y, 0), new THREE.Vector3(p2.x, p2.y, 0), new THREE.Vector3(p1.x, p2.y, 0), new THREE.Vector3(p1.x, p1.y, 0)];
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const rectangle = new THREE.LineLoop(geometry, material);
+    rectangle.name = `rectangle-${Date.now()}`;
+    setObjects(prev => [...prev, { id: rectangle.name, type: 'rectangle', geometry, material, mesh: rectangle }]);
+  }, []);
+
+  const drawCircle = useCallback((center: THREE.Vector3, radius: number) => {
+    const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
+    const points = [];
+    for (let i = 0; i <= 64; i++) {
+      const angle = (i / 64) * Math.PI * 2;
+      points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0));
+    }
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const circle = new THREE.LineLoop(geometry, material);
+    circle.position.copy(center);
+    circle.name = `circle-${Date.now()}`;
+    setObjects(prev => [...prev, { id: circle.name, type: 'circle', geometry, material, mesh: circle }]);
+  }, []);
+
+  const selectObject = useCallback((id: string | null) => setSelectedId(id), []);
+
+  const moveObject = useCallback((id: string, delta: THREE.Vector3) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id) {
+        const newMesh = obj.mesh.clone();
+        newMesh.position.add(delta);
+        return { ...obj, mesh: newMesh };
+      }
+      return obj;
+    }));
+  }, []);
+
+  const copyObject = useCallback((id: string) => {
+    const objToCopy = objects.find(o => o.id === id);
+    if (objToCopy) {
+      const newId = `${objToCopy.type}-${Date.now()}`;
+      const newMesh = objToCopy.mesh.clone();
+      newMesh.position.add(new THREE.Vector3(10, 10, 0));
+      newMesh.name = newId;
+      setObjects(prev => [...prev, { ...objToCopy, id: newId, mesh: newMesh }]);
+    }
+  }, [objects]);
+
+  const executeExtrude = useCallback((id: string, depth: number) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id && (obj.mesh instanceof THREE.Line || obj.mesh instanceof THREE.LineLoop)) {
+        const positions = obj.geometry.attributes.position.array;
+        const shape = new THREE.Shape();
+        for (let i = 0; i < positions.length; i += 3) {
+          if (i === 0) shape.moveTo(positions[i], positions[i + 1]);
+          else shape.lineTo(positions[i], positions[i + 1]);
+        }
+        const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+        const material = new THREE.MeshPhongMaterial({ color: (obj.material as any).color || 0xcccccc });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.name = obj.id;
+        return { ...obj, geometry, material, mesh };
+      }
+      return obj;
+    }));
+  }, []);
+
+  const executeFillet = useCallback((id: string, radius: number) => console.log('Fillet not implemented', id, radius), []);
+  const executeTrim = useCallback((id: string, cuttingId: string) => console.log('Trim not implemented', id, cuttingId), []);
+  const executeExtend = useCallback((id: string, targetId: string) => console.log('Extend not implemented', id, targetId), []);
+
+  const executeRotate = useCallback((id: string, axis: THREE.Vector3, angle: number) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id) {
+        const newMesh = obj.mesh.clone();
+        newMesh.rotateOnAxis(axis.normalize(), angle);
+        return { ...obj, mesh: newMesh };
+      }
+      return obj;
+    }));
+  }, []);
+
+  const executeOffset = useCallback((id: string, distance: number) => console.log('Offset not implemented', id, distance), []);
+
+  const executeScale = useCallback((id: string, factor: THREE.Vector3) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id) {
+        const newMesh = obj.mesh.clone();
+        newMesh.scale.multiply(factor);
+        return { ...obj, mesh: newMesh };
+      }
+      return obj;
+    }));
+  }, []);
+
+  const executeUnion = useCallback((id1: string, id2: string) => console.log('Union not implemented', id1, id2), []);
+  const executeSubtract = useCallback((id1: string, id2: string) => console.log('Subtract not implemented', id1, id2), []);
+
+  const executeErase = useCallback((id: string) => {
+    setObjects(prev => prev.filter(obj => obj.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  }, [selectedId]);
+
+  const exportToPDF = useCallback(() => {
+    if (!renderer.current) return;
+    const dataUrl = renderer.current.domElement.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = 'cad-export.png';
+    link.click();
+    console.log('PDF export simulated via PNG download. Use a library like jsPDF for true PDF.');
+  }, []);
 
   useEffect(() => {
-    if (objects.length > 0 && !selectedId) {
-      selectObject(objects[0].id);
-    }
-  }, [objects, selectedId, selectObject]);
+    if (!canvasRef.current) return;
+    renderer.current = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.current.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
+    canvasRef.current.appendChild(renderer.current.domElement);
+    const aspect = canvasRef.current.clientWidth / canvasRef.current.clientHeight;
+    camera.current = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+    camera.current.position.set(100, 100, 100);
+    camera.current.lookAt(0, 0, 0);
+    controls.current = new OrbitControls(camera.current, renderer.current.domElement);
+    scene.current.add(new THREE.GridHelper(200, 20), new THREE.AxesHelper(50), new THREE.AmbientLight(0x404040));
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(1, 1, 1);
+    scene.current.add(light);
 
-  const handleDrawLine = () => {
-    const start = new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0);
-    const end = new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0);
-    drawLine(start, end);
+    const animate = () => {
+      requestAnimationFrame(animate);
+      if (controls.current) controls.current.update();
+      if (renderer.current && camera.current) renderer.current.render(scene.current, camera.current);
+    };
+    animate();
+
+    const handleResize = () => {
+      if (!canvasRef.current || !renderer.current || !camera.current) return;
+      const w = canvasRef.current.clientWidth, h = canvasRef.current.clientHeight;
+      renderer.current.setSize(w, h);
+      if (camera.current instanceof THREE.PerspectiveCamera) camera.current.aspect = w / h;
+      camera.current.updateProjectionMatrix();
+    };
+    window.addEventListener('resize', handleResize);
+
+    const onCanvasClick = (event: MouseEvent) => {
+      if (!canvasRef.current || !camera.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      mouse.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.current.setFromCamera(mouse.current, camera.current);
+      const intersects = raycaster.current.intersectObjects(scene.current.children, true);
+
+      if (drawingMode !== 'none') {
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersection = new THREE.Vector3();
+        raycaster.current.ray.intersectPlane(plane, intersection);
+        if (intersection) {
+          const newPoints = [...drawingPoints, intersection];
+          if (drawingMode === 'line' && newPoints.length === 2) { drawLine(newPoints[0], newPoints[1]); setDrawingPoints([]); setDrawingMode('none'); }
+          else if (drawingMode === 'rectangle' && newPoints.length === 2) { drawRectangle(newPoints[0], newPoints[1]); setDrawingPoints([]); setDrawingMode('none'); }
+          else if (drawingMode === 'circle' && newPoints.length === 2) { drawCircle(newPoints[0], newPoints[0].distanceTo(newPoints[1])); setDrawingPoints([]); setDrawingMode('none'); }
+          else if (drawingMode === 'polyline' && event.detail === 2) { drawPolyline(newPoints); setDrawingPoints([]); setDrawingMode('none'); }
+          else setDrawingPoints(newPoints);
+        }
+      } else if (intersects.length > 0) {
+        const hit = intersects.find(i => i.object.name !== '');
+        if (hit) selectObject(hit.object.name); else selectObject(null);
+      } else selectObject(null);
+    };
+    canvasRef.current.addEventListener('click', onCanvasClick);
+    return () => { window.removeEventListener('resize', handleResize); canvasRef.current?.removeEventListener('click', onCanvasClick); cleanupMemory(); };
+  }, [cleanupMemory, drawingMode, drawingPoints, drawLine, drawPolyline, drawRectangle, drawCircle, selectObject]);
+
+  useEffect(() => {
+    const currentMeshIds = new Set(objects.map(o => o.id));
+    scene.current.children.forEach(child => { if (child.name && !currentMeshIds.has(child.name) && (child instanceof THREE.Mesh || child instanceof THREE.Line || child instanceof THREE.LineLoop)) scene.current.remove(child); });
+    objects.forEach(obj => {
+      const existing = scene.current.getObjectByName(obj.id); if (existing) scene.current.remove(existing);
+      const mesh = obj.mesh.clone(); mesh.name = obj.id;
+      if (obj.id === selectedId) {
+        if (mesh instanceof THREE.Mesh) mesh.material = new THREE.MeshPhongMaterial({ color: 0xff0000, emissive: 0x330000 });
+        else mesh.material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+      } else mesh.material = obj.material;
+      scene.current.add(mesh);
+    });
+    saveState();
+  }, [objects, selectedId, saveState]);
+
+  useEffect(() => { syncCameraMatrix(); }, [viewMode, orthoMode, syncCameraMatrix]);
+
+  return {
+    objects, selectedId, viewMode, orthoMode, drawingMode, canvasRef,
+    setOrthoMode, setViewMode, setDrawingMode, drawLine, drawPolyline, drawRectangle, drawCircle,
+    selectObject, moveObject, copyObject, executeExtrude, executeFillet, executeTrim, executeExtend,
+    executeRotate, executeOffset, executeScale, executeUnion, executeSubtract, executeErase,
+    undo, redo, cleanupMemory, exportToPDF
   };
-
-  const handleDrawPolyline = () => {
-    const points = [
-      new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0),
-      new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0),
-      new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0),
-    ];
-    drawPolyline(points);
-  };
-
-  const handleDrawRectangle = () => {
-    const p1 = new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0);
-    const p2 = new THREE.Vector3(p1.x + 20, p1.y + 15, 0);
-    drawRectangle(p1, p2);
-  };
-
-  const handleDrawCircle = () => {
-    const center = new THREE.Vector3(Math.random() * 50 - 25, Math.random() * 50 - 25, 0);
-    const radius = Math.random() * 10 + 5;
-    drawCircle(center, radius);
-  };
-
-  const handleMoveObject = () => {
-    if (selectedId) {
-      const delta = new THREE.Vector3(Math.random() * 10 - 5, Math.random() * 10 - 5, 0);
-      moveObject(selectedId, delta);
-    }
-  };
-
-  const handleExtrude = () => {
-    if (selectedId) executeExtrude(selectedId, extrudeDepth);
-  };
-
-  const handleFillet = () => {
-    if (selectedId) executeFillet(selectedId, filletRadius);
-  };
-
-  const handleTrim = () => {
-    if (objectId1 && objectId2) executeTrim(objectId1, objectId2);
-  };
-
-  const handleExtend = () => {
-    if (objectId1 && objectId2) executeExtend(objectId1, objectId2);
-  };
-
-  const handleRotate = () => {
-    if (selectedId) {
-      const axis = new THREE.Vector3(0, 0, 1);
-      executeRotate(selectedId, axis, rotateAngle);
-    }
-  };
-
-  const handleOffset = () => {
-    if (selectedId) executeOffset(selectedId, offsetDistance);
-  };
-
-  const handleScale = () => {
-    if (selectedId) {
-      executeScale(selectedId, new THREE.Vector3(scaleFactor, scaleFactor, scaleFactor));
-    }
-  };
-
-  const handleUnion = () => {
-    if (objectId1 && objectId2) executeUnion(objectId1, objectId2);
-  };
-
-  const handleSubtract = () => {
-    if (objectId1 && objectId2) executeSubtract(objectId1, objectId2);
-  };
-
-  const handleErase = () => {
-    if (selectedId) executeErase(selectedId);
-  };
-
-  return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden', fontFamily: 'sans-serif' }}>
-      <div style={{ width: '260px', background: '#2c3e50', color: 'white', padding: '15px', borderRight: '1px solid #1a252f', overflowY: 'auto' }}>
-        <h2 style={{ fontSize: '1.2rem', marginBottom: '20px' }}>CAD Controls</h2>
-        
-        <section style={{ marginBottom: '20px' }}>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>Drawing Tools</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-            <button onClick={handleDrawLine}>Line</button>
-            <button onClick={handleDrawPolyline}>Polyline</button>
-            <button onClick={handleDrawRectangle}>Rect</button>
-            <button onClick={handleDrawCircle}>Circle</button>
-          </div>
-        </section>
-
-        <section style={{ marginBottom: '20px' }}>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>Transform</h4>
-          <div style={{ fontSize: '0.8rem' }}>
-            <div style={{ marginBottom: '5px' }}>
-              <label>Extrude: </label>
-              <input type="number" style={{ width: '50px' }} value={extrudeDepth} onChange={(e) => setExtrudeDepth(parseFloat(e.target.value))} />
-              <button onClick={handleExtrude} disabled={!selectedId}>Apply</button>
-            </div>
-            <div style={{ marginBottom: '5px' }}>
-              <label>Fillet: </label>
-              <input type="number" style={{ width: '50px' }} value={filletRadius} onChange={(e) => setFilletRadius(parseFloat(e.target.value))} />
-              <button onClick={handleFillet} disabled={!selectedId}>Apply</button>
-            </div>
-            <div style={{ marginBottom: '5px' }}>
-              <label>Rotate: </label>
-              <input type="number" style={{ width: '50px' }} value={rotateAngle} onChange={(e) => setRotateAngle(parseFloat(e.target.value))} />
-              <button onClick={handleRotate} disabled={!selectedId}>Apply</button>
-            </div>
-            <div style={{ marginBottom: '5px' }}>
-              <label>Offset: </label>
-              <input type="number" style={{ width: '50px' }} value={offsetDistance} onChange={(e) => setOffsetDistance(parseFloat(e.target.value))} />
-              <button onClick={handleOffset} disabled={!selectedId}>Apply</button>
-            </div>
-            <div style={{ marginBottom: '5px' }}>
-              <label>Scale: </label>
-              <input type="number" style={{ width: '50px' }} value={scaleFactor} onChange={(e) => setScaleFactor(parseFloat(e.target.value))} />
-              <button onClick={handleScale} disabled={!selectedId}>Apply</button>
-            </div>
-          </div>
-        </section>
-
-        <section style={{ marginBottom: '20px' }}>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>Boolean Ops</h4>
-          <div style={{ fontSize: '0.8rem' }}>
-            <input type="text" placeholder="Obj ID 1" style={{ width: '100%', marginBottom: '5px' }} value={objectId1} onChange={(e) => setObjectId1(e.target.value)} />
-            <input type="text" placeholder="Obj ID 2" style={{ width: '100%', marginBottom: '5px' }} value={objectId2} onChange={(e) => setObjectId2(e.target.value)} />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-              <button onClick={handleUnion}>Union</button>
-              <button onClick={handleSubtract}>Subtract</button>
-              <button onClick={handleTrim}>Trim</button>
-              <button onClick={handleExtend}>Extend</button>
-            </div>
-          </div>
-        </section>
-
-        <section style={{ marginBottom: '20px' }}>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>Selection</h4>
-          <button style={{ width: '100%', marginBottom: '5px' }} onClick={handleMoveObject} disabled={!selectedId}>Move Selected</button>
-          <button style={{ width: '100%', background: '#e74c3c' }} onClick={handleErase} disabled={!selectedId}>Erase</button>
-          <p style={{ fontSize: '0.8rem', marginTop: '10px' }}>Selected: {selectedId ? selectedId.substring(0, 12) : 'None'}</p>
-        </section>
-
-        <section style={{ marginBottom: '20px' }}>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>View</h4>
-          <div style={{ marginBottom: '10px' }}>
-            <label style={{ fontSize: '0.9rem' }}>
-              <input type="checkbox" checked={orthoMode} onChange={() => setOrthoMode(!orthoMode)} /> Orthographic
-            </label>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-            <button onClick={() => setViewMode('top')}>Top</button>
-            <button onClick={() => setViewMode('front')}>Front</button>
-            <button onClick={() => setViewMode('side')}>Side</button>
-            <button onClick={() => setViewMode('isometric')}>Iso</button>
-          </div>
-        </section>
-
-        <section>
-          <h4 style={{ borderBottom: '1px solid #34495e', paddingBottom: '5px' }}>History</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
-            <button onClick={undo}>Undo</button>
-            <button onClick={redo}>Redo</button>
-          </div>
-        </section>
-      </div>
-      
-      <div ref={canvasRef} style={{ flexGrow: 1, background: '#000', cursor: 'crosshair' }} />
-    </div>
-  );
 };
-
-export default App;
