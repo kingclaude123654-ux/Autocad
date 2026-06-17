@@ -1,3 +1,4 @@
+// src/hooks/useCADEngine.ts
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -266,16 +267,14 @@ export function useCADEngine() {
     const ctrl = controlsRef.current;
     if (!cam || !ctrl) return;
     let pos: THREE.Vector3;
-    const up = new THREE.Vector3(0, 1, 0);
     switch (vm) {
-      case 'top': pos = new THREE.Vector3(0, 10, 0.001); up.set(0, 0, -1); break;
+      case 'top': pos = new THREE.Vector3(0, 10, 0.001); break;
       case 'front': pos = new THREE.Vector3(0, 0, 10); break;
       case 'side': pos = new THREE.Vector3(10, 0, 0); break;
       default: pos = new THREE.Vector3(7, 7, 7); break;
     }
     cam.position.copy(pos);
     ctrl.target.set(0, 0, 0);
-    ctrl.up.copy(up);
     ctrl.update();
     drawingPlaneRef.current = vm === 'top' ? new THREE.Plane(new THREE.Vector3(0, 1, 0), 0) :
       vm === 'front' ? new THREE.Plane(new THREE.Vector3(0, 0, 1), 0) :
