@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-// --- TYPES & INTERFACES ---
+// --- TYPES ---
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
-export type ToolType = 'select' | 'pan' | 'move' | 'line' | 'polyline' | 'rectangle' | 'polygon' | 'circle';
+export type ToolType = 'select' | 'pan' | 'line' | 'rectangle' | 'circle';
 
 export interface Point2D {
   x: number;
@@ -17,31 +17,21 @@ export interface CADObject {
   color: string;
   layer: string;
   is3D: boolean;
-  extrusionHeight?: number;
-  properties?: Record<string, any>;
 }
 
 export default function App() {
-  // --- APPLICATION STATES ---
+  // --- STATES ---
   const [objects, setObjects] = useState<CADObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('line');
   const [viewMode, setViewMode] = useState<ViewMode>('top');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('System Ready: Tap or click and drag to start drawing.');
+  const [hudFeedback, setHudFeedback] = useState<string>('Ready. Tap and drag to draw.');
 
-  // Workspace Settings
-  const [unit] = useState<string>('mm'); // Removed setUnit to resolve TS6133
-  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
-  const [orthoMode, setOrthoMode] = useState<boolean>(false);
+  // --- CONFIG ---
   const workspaceSize = 500;
   const gridSpacing = 10;
 
-  // History Stack
-  const [history, setHistory] = useState<CADObject[][]>([[]]);
-  const [historyIndex, setHistoryIndex] = useState<number>(0);
-
-  // --- CORE THREE.JS & INTERACTION REFERENCES ---
+  // --- REFS ---
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -49,82 +39,46 @@ export default function App() {
   const visualObjectsRef = useRef<Map<string, THREE.Object3D>>(new Map());
   const previewLineRef = useRef<THREE.Line | null>(null);
 
-  // Drawing Gesture Trackers
+  // Gesture Tracking
   const isDrawingRef = useRef<boolean>(false);
   const startPointRef = useRef<Point2D | null>(null);
   const currentPointRef = useRef<Point2D | null>(null);
-  const chainAnchorRef = useRef<Point2D | null>(null);
-  const moveStartPointRef = useRef<Point2D | null>(null);
-  const polylinePointsRef = useRef<Point2D[]>([]);
 
-  // Navigation Trackers
-  const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
-  const cameraZoomRef = useRef<number>(1.2);
+  // --- NEW PAN OPTION TRACKING REFS ---
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
 
-  // Thread-Safe State Mirror to eliminate engine lag
-  const stateRef = useRef({
-    currentTool,
-    objects,
-    selectedId,
-    orthoMode,
-    snapToGrid,
-    viewMode,
-    gridSpacing,
-    unit,
-    workspaceSize
-  });
+  // State Mirror for the Engine Loop
+  const stateRef = useRef({ currentTool, objects, selectedId, viewMode });
 
   useEffect(() => {
-    stateRef.current = {
-      currentTool,
-      objects,
-      selectedId,
-      orthoMode,
-      snapToGrid,
-      viewMode,
-      gridSpacing,
-      unit,
-      workspaceSize
-    };
-  }, [currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode, unit]);
+    stateRef.current = { currentTool, objects, selectedId, viewMode };
+  }, [currentTool, objects, selectedId, viewMode]);
 
-  const generateId = () => Math.random().toString(36).substring(2, 9);
-
-  // --- CAMERA MATRIX COORDINATION ---
-  const syncCameraMatrix = (forcedMode?: ViewMode) => {
-    if (!cameraRef.current) return;
-    const activeMode = forcedMode || viewMode;
+  // --- CAMERA CONTROLLER ---
+  const updateCamera = () => {
+    if (!cameraRef.current || !rendererRef.current) return;
     const offset = cameraOffsetRef.current;
-    const dist = 240 * cameraZoomRef.current;
+    const dist = 300;
 
-    if (activeMode === 'top') {
+    if (viewMode === 'top') {
       cameraRef.current.position.set(offset.x, dist, offset.z + 0.001);
-    } else if (activeMode === 'front') {
+    } else if (viewMode === 'front') {
       cameraRef.current.position.set(offset.x, offset.y, dist);
-    } else if (activeMode === 'side') {
+    } else if (viewMode === 'side') {
       cameraRef.current.position.set(dist, offset.y, offset.z);
     } else {
       cameraRef.current.position.set(offset.x + dist * 0.7, offset.y + dist * 0.7, offset.z + dist * 0.7);
     }
+    
     cameraRef.current.lookAt(offset.x, offset.y, offset.z);
     cameraRef.current.updateProjectionMatrix();
-
-    if (rendererRef.current) {
-      rendererRef.current.render(sceneRef.current, cameraRef.current);
-    }
+    rendererRef.current.render(sceneRef.current, cameraRef.current);
   };
 
-  const updateHistory = (nextState: CADObject[]) => {
-    const trimmed = history.slice(0, historyIndex + 1);
-    setHistory([...trimmed, nextState]);
-    setHistoryIndex(trimmed.length);
-    setObjects(nextState);
-  };
-
-  // --- RAYCASTING WORKSPACE INTERSECTIONS ---
-  const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
+  // --- TRANSLATE TO SPACE COORDINATES ---
+  const getSpacePoint = (clientX: number, clientY: number): Point2D | null => {
     if (!containerRef.current || !cameraRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -133,304 +87,204 @@ export default function App() {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
 
-    let norm = new THREE.Vector3(0, 1, 0);
-    if (stateRef.current.viewMode === 'front') norm.set(0, 0, 1);
-    if (stateRef.current.viewMode === 'side') norm.set(1, 0, 0);
-
-    const plane = new THREE.Plane(norm, 0);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const intersect = new THREE.Vector3();
     if (raycaster.ray.intersectPlane(plane, intersect)) {
-      let calcX = intersect.x;
-      let calcY = (stateRef.current.viewMode === 'front' || stateRef.current.viewMode === 'side') ? intersect.y : intersect.z;
-
-      if (stateRef.current.snapToGrid) {
-        calcX = Math.round(calcX / stateRef.current.gridSpacing) * stateRef.current.gridSpacing;
-        calcY = Math.round(calcY / stateRef.current.gridSpacing) * stateRef.current.gridSpacing;
-      }
-      return { x: calcX, y: calcY };
+      return { x: intersect.x, y: intersect.z };
     }
     return null;
   };
 
-  // --- UNIFIED POINTER EVENT LISTENERS (Web & Mobile Touch) ---
-  const handlePointerDown = (clientX: number, clientY: number, isRightClick = false) => {
-    if (isRightClick || stateRef.current.currentTool === 'pan') {
+  // --- CORE INTERACTION HANDLERS ---
+  const handlePointerDown = (clientX: number, clientY: number) => {
+    // Handle Pan Tool Activation
+    if (stateRef.current.currentTool === 'pan') {
       isPanningRef.current = true;
       panStartRef.current = { x: clientX, y: clientY };
       return;
     }
 
-    const pts = get3DPoint(clientX, clientY);
+    const pts = getSpacePoint(clientX, clientY);
     if (!pts) return;
 
     if (stateRef.current.currentTool === 'select') {
-      const found = stateRef.current.objects.find((o) => o && o.points && o.points.some((p) => Math.abs(p.x - pts.x) < (stateRef.current.gridSpacing * 2.5) && Math.abs(p.y - pts.y) < (stateRef.current.gridSpacing * 2.5)));
+      const found = stateRef.current.objects.find(o => 
+        o.points.some(p => Math.abs(p.x - pts.x) < 20 && Math.abs(p.y - pts.y) < 20)
+      );
       setSelectedId(found ? found.id : null);
-      if (found) setHudFeedback(`Selected element: ${found.type.toUpperCase()}`);
-      return;
-    }
-
-    if (stateRef.current.currentTool === 'move') {
-      if (!stateRef.current.selectedId) return;
-      isDrawingRef.current = true;
-      moveStartPointRef.current = pts;
+      if (found) setHudFeedback(`Selected: ${found.type.toUpperCase()}`);
       return;
     }
 
     isDrawingRef.current = true;
-    if (stateRef.current.currentTool === 'polyline') {
-      if (polylinePointsRef.current.length === 0) { polylinePointsRef.current.push(pts); }
-      startPointRef.current = polylinePointsRef.current[polylinePointsRef.current.length - 1];
-    } else {
-      startPointRef.current = chainAnchorRef.current ? chainAnchorRef.current : pts;
-    }
+    startPointRef.current = pts;
     currentPointRef.current = pts;
   };
 
   const handlePointerMove = (clientX: number, clientY: number) => {
-    if (isPanningRef.current) {
-      const dx = clientX - panStartRef.current.x; const dy = clientY - panStartRef.current.y;
+    // Run Pan Update Loop smoothly on touch/drag
+    if (stateRef.current.currentTool === 'pan' && isPanningRef.current) {
+      const dx = clientX - panStartRef.current.x;
+      const dy = clientY - panStartRef.current.y;
       panStartRef.current = { x: clientX, y: clientY };
-      
-      const factor = 0.35 * cameraZoomRef.current;
-      if (stateRef.current.viewMode === 'top') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.z -= dy * factor; }
-      else if (stateRef.current.viewMode === 'front') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.y += dy * factor; }
-      else if (stateRef.current.viewMode === 'side') { cameraOffsetRef.current.z += dx * factor; cameraOffsetRef.current.y += dy * factor; }
-      syncCameraMatrix();
+
+      const factor = 0.4;
+      cameraOffsetRef.current.x -= dx * factor;
+      cameraOffsetRef.current.z -= dy * factor;
+      updateCamera();
       return;
     }
 
     if (!isDrawingRef.current || !startPointRef.current) return;
-    let pts = get3DPoint(clientX, clientY);
+    const pts = getSpacePoint(clientX, clientY);
     if (!pts) return;
-
-    if (stateRef.current.orthoMode && stateRef.current.currentTool !== 'move') {
-      const dx = Math.abs(pts.x - startPointRef.current.x);
-      const dy = Math.abs(pts.y - startPointRef.current.y);
-      pts = dx > dy ? { x: pts.x, y: startPointRef.current.y } : { x: startPointRef.current.x, y: pts.y };
-    }
-
-    if (stateRef.current.currentTool === 'move' && moveStartPointRef.current && stateRef.current.selectedId) {
-      const dx = pts.x - moveStartPointRef.current.x; const dy = pts.y - moveStartPointRef.current.y;
-      moveStartPointRef.current = pts;
-      setObjects((prev) => prev.map((o) => o.id === stateRef.current.selectedId ? { ...o, points: o.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : o));
-      return;
-    }
 
     currentPointRef.current = pts;
     const origin = startPointRef.current;
-    const len = Math.round(Math.hypot(pts.x - origin.x, pts.y - origin.y));
+    const len = Math.hypot(pts.x - origin.x, pts.y - origin.y);
 
     if (previewLineRef.current) {
       const pPts: THREE.Vector3[] = [];
-      if (stateRef.current.currentTool === 'line' || stateRef.current.currentTool === 'polyline') {
-        pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y));
+      if (stateRef.current.currentTool === 'line') {
+        pPts.push(new THREE.Vector3(origin.x, 0.5, origin.y), new THREE.Vector3(pts.x, 0.5, pts.y));
       } else if (stateRef.current.currentTool === 'rectangle') {
-        pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
-      } else if (stateRef.current.currentTool === 'polygon') {
-        for (let i = 0; i <= 3; i++) { const alpha = (i / 3) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
+        pPts.push(
+          new THREE.Vector3(origin.x, 0.5, origin.y),
+          new THREE.Vector3(pts.x, 0.5, origin.y),
+          new THREE.Vector3(pts.x, 0.5, pts.y),
+          new THREE.Vector3(origin.x, 0.5, pts.y),
+          new THREE.Vector3(origin.x, 0.5, origin.y)
+        );
       } else if (stateRef.current.currentTool === 'circle') {
-        for (let i = 0; i <= 64; i++) { const alpha = (i / 64) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
+        for (let i = 0; i <= 64; i++) {
+          const a = (i / 64) * Math.PI * 2;
+          pPts.push(new THREE.Vector3(origin.x + Math.cos(a) * len, 0.5, origin.y + Math.sin(a) * len));
+        }
       }
       previewLineRef.current.geometry.setFromPoints(pPts);
-      if (rendererRef.current && cameraRef.current) rendererRef.current.render(sceneRef.current, cameraRef.current);
+      if (rendererRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
     }
   };
 
   const handlePointerUp = () => {
-    if (isPanningRef.current) { isPanningRef.current = false; return; }
-    if (!isDrawingRef.current) return;
+    if (isPanningRef.current) {
+      isPanningRef.current = false;
+      return;
+    }
+    if (!isDrawingRef.current || !startPointRef.current || !currentPointRef.current) return;
 
     isDrawingRef.current = false;
-    if (stateRef.current.currentTool === 'move') { moveStartPointRef.current = null; updateHistory(stateRef.current.objects); return; }
-    if (!startPointRef.current || !currentPointRef.current) return;
-
     const origin = startPointRef.current;
     const end = currentPointRef.current;
+    const len = Math.hypot(end.x - origin.x, end.y - origin.y);
 
-    const len = Math.round(Math.hypot(end.x - origin.x, end.y - origin.y));
-    if (len < 1) return;
-
+    if (len < 2) return;
     let newObj: CADObject | null = null;
+    const genId = Math.random().toString(36).substring(2, 9);
 
     if (stateRef.current.currentTool === 'line') {
-      newObj = { id: generateId(), type: 'line', points: [origin, end], color: '#3b82f6', layer: '0', is3D: false, properties: { length: len } };
-      chainAnchorRef.current = end;
-    } else if (stateRef.current.currentTool === 'polyline') {
-      polylinePointsRef.current.push(end);
-      const freezePoints = [...polylinePointsRef.current];
-      setObjects((prev) => [
-        ...prev.filter(o => o.id !== 'active_pline'),
-        { id: 'active_pline', type: 'polyline', points: freezePoints, color: '#38bdf8', layer: '0', is3D: false }
-      ]);
-      startPointRef.current = end;
-      isDrawingRef.current = true; 
-      return; 
+      newObj = { id: genId, type: 'line', points: [origin, end], color: '#3b82f6', layer: '0', is3D: false };
     } else if (stateRef.current.currentTool === 'rectangle') {
-      newObj = { id: generateId(), type: 'rectangle', points: [{ x: origin.x, y: origin.y }, { x: end.x, y: origin.y }, { x: end.x, y: end.y }, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false, properties: { width: Math.abs(end.x - origin.x), height: Math.abs(end.y - origin.y) } };
-    } else if (stateRef.current.currentTool === 'polygon') {
-      const pts: Point2D[] = [];
-      for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false };
+      newObj = { id: genId, type: 'rectangle', points: [origin, { x: end.x, y: origin.y }, end, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false };
     } else if (stateRef.current.currentTool === 'circle') {
       const pts: Point2D[] = [];
-      for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false, properties: { radius: len } };
+      for (let i = 0; i < 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len });
+      }
+      newObj = { id: genId, type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false };
     }
 
     if (newObj) {
-      const activeStateList = stateRef.current.objects.filter(o => o && o.id !== 'active_pline');
-      updateHistory([...activeStateList, newObj]);
-      setSelectedId(newObj.id);
-      setHudFeedback(`Successfully added ${newObj.type.toUpperCase()} object.`);
+      setObjects(prev => [...prev, newObj!]);
+      setHudFeedback(`Added ${newObj.type.toUpperCase()}`);
     }
 
-    startPointRef.current = null; currentPointRef.current = null;
-    if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([]);
   };
 
-  // --- ENGINE WORKSPACE GENERATOR ---
+  // --- INITIALIZE THREE.JS RUNTIME ENGINE ---
   useEffect(() => {
     if (!containerRef.current) return;
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
+    const w = containerRef.current.clientWidth;
+    const h = containerRef.current.clientHeight;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setSize(width, height);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(w, h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     containerRef.current.innerHTML = '';
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
     const scene = sceneRef.current;
-    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
+    scene.background = new THREE.Color(0x0f172a); // Keeping your dark background intact
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 2000);
     cameraRef.current = camera;
-    syncCameraMatrix();
+    updateCamera();
 
-    scene.clear(); 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.75);
-    dl.position.set(150, 350, 150);
-    scene.add(dl);
+    scene.clear();
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
 
-    const divisions = Math.round(workspaceSize / gridSpacing);
-    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
+    const grid = new THREE.GridHelper(workspaceSize, workspaceSize / gridSpacing, 0x4f46e5, 0x334155);
     scene.add(grid);
 
-    const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
-    const previewLine = new THREE.Line(new THREE.BufferGeometry(), pMat);
-    previewLine.renderOrder = 999;
-    scene.add(previewLine);
-    previewLineRef.current = previewLine;
+    const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 2 });
+    const pLine = new THREE.Line(new THREE.BufferGeometry(), pMat);
+    scene.add(pLine);
+    previewLineRef.current = pLine;
 
+    // Direct Mobile Touch and Mouse Event Attachment
     const host = containerRef.current;
-
-    // Desktop Mouse Events
-    const onMouseDown = (e: MouseEvent) => { e.preventDefault(); handlePointerDown(e.clientX, e.clientY, e.button === 2); };
-    const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
-    const onMouseUp = () => { handlePointerUp(); };
-
-    // Mobile Touch Events mapping directly to same vector tracking loops
-    const onTouchStart = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerDown(e.touches[0].clientX, e.touches[0].clientY, false); } };
-    const onTouchMove = (e: TouchEvent) => { if(e.touches.length === 1) { handlePointerMove(e.touches[0].clientX, e.touches[0].clientY); } };
     
+    const onMouseDown = (e: MouseEvent) => { handlePointerDown(e.clientX, e.clientY); };
+    const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
+    
+    const onTouchStart = (e: TouchEvent) => { if (e.touches.length === 1) handlePointerDown(e.touches[0].clientX, e.touches[0].clientY); };
+    const onTouchMove = (e: TouchEvent) => { if (e.touches.length === 1) handlePointerMove(e.touches[0].clientX, e.touches[0].clientY); };
+
     host.addEventListener('mousedown', onMouseDown);
     host.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mouseup', handlePointerUp);
 
     host.addEventListener('touchstart', onTouchStart, { passive: true });
     host.addEventListener('touchmove', onTouchMove, { passive: true });
-    host.addEventListener('touchend', onMouseUp, { passive: true });
-
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
-      syncCameraMatrix();
-    };
-    host.addEventListener('wheel', handleWheel, { passive: false });
-
-    const handleResize = () => {
-      if (!containerRef.current || !cameraRef.current || !rendererRef.current) return;
-      const w = containerRef.current.clientWidth;
-      const h = containerRef.current.clientHeight;
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-      rendererRef.current.render(sceneRef.current, cameraRef.current);
-    };
-    window.addEventListener('resize', handleResize);
+    host.addEventListener('touchend', handlePointerUp, { passive: true });
 
     return () => {
-      window.removeEventListener('resize', handleResize);
-      host.removeEventListener('wheel', handleWheel);
       host.removeEventListener('mousedown', onMouseDown);
       host.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mouseup', handlePointerUp);
       host.removeEventListener('touchstart', onTouchStart);
       host.removeEventListener('touchmove', onTouchMove);
-      host.removeEventListener('touchend', onMouseUp);
+      host.removeEventListener('touchend', handlePointerUp);
       renderer.dispose();
     };
-  }, [isDarkMode]);
+  }, []);
 
-  useEffect(() => { syncCameraMatrix(); }, [viewMode]);
+  useEffect(() => { updateCamera(); }, [viewMode]);
 
-  // --- GEOMETRY PIPELINE RENDER ENGINE ---
+  // --- COMPONENT VECTOR RENDERING SYNC ---
   useEffect(() => {
     if (!sceneRef.current) return;
-    visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
+    visualObjectsRef.current.forEach(m => sceneRef.current.remove(m));
     visualObjectsRef.current.clear();
 
-    objects.forEach((obj) => {
-      if (!obj || !obj.points) return;
+    objects.forEach(obj => {
       const isSelected = obj.id === selectedId;
-      const colorHex = isSelected ? 0xef4444 : new THREE.Color(obj.color || '#3b82f6').getHex();
+      const colorHex = isSelected ? 0xef4444 : new THREE.Color(obj.color).getHex();
       const group = new THREE.Group();
 
-      if (obj.is3D && obj.extrusionHeight) {
-        const shape = new THREE.Shape();
-        if (obj.points.length > 1) {
-          shape.moveTo(obj.points[0].x, obj.points[0].y);
-          for (let i = 1; i < obj.points.length; i++) { shape.lineTo(obj.points[i].x, obj.points[i].y); }
-          shape.lineTo(obj.points[0].x, obj.points[0].y);
+      const vecPoints: THREE.Vector3[] = [];
+      obj.points.forEach(p => vecPoints.push(new THREE.Vector3(p.x, 0.2, p.y)));
+      if (obj.type !== 'line') vecPoints.push(vecPoints[0].clone());
 
-          const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
-          geo.rotateX(-Math.PI / 2);
-          const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.4, side: THREE.DoubleSide });
-          const mesh = new THREE.Mesh(geo, mat);
-          group.add(mesh);
-        }
-      } else {
-        const vecPoints: THREE.Vector3[] = [];
-        obj.points.forEach((p) => { if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y)); });
-        
-        if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
-          vecPoints.push(vecPoints[0].clone());
-        }
+      const geo = new THREE.BufferGeometry().setFromPoints(vecPoints);
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex, linewidth: 2 }));
+      group.add(line);
 
-        if (vecPoints.length > 0) {
-          const geo = new THREE.BufferGeometry().setFromPoints(vecPoints);
-          const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex, linewidth: 3, depthTest: false }));
-          line.renderOrder = 10;
-          group.add(line);
-        }
-
-        if (isSelected && obj.points.length >= 2) {
-          const p1 = obj.points[0]; const p2 = obj.points[obj.points.length - 1];
-          let text = obj.type === 'circle' && obj.properties?.radius ? `R:${obj.properties.radius}${unit}` : `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
-          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 64;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace'; ctx.fillText(text, 5, 36);
-            const texture = new THREE.CanvasTexture(canvas);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
-            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2); sprite.scale.set(18, 9, 1);
-            group.add(sprite);
-          }
-        }
-      }
       sceneRef.current.add(group);
       visualObjectsRef.current.set(obj.id, group);
     });
@@ -438,228 +292,45 @@ export default function App() {
     if (rendererRef.current && cameraRef.current) {
       rendererRef.current.render(sceneRef.current, cameraRef.current);
     }
-  }, [objects, selectedId, unit]);
-
-  // --- TOOLBAR MODIFIER OPERATIONS ---
-  const executeExtrude = () => {
-    if (!selectedId) return alert('Select an object first.');
-    const input = prompt("Enter precise extrusion depth dimension:", "40");
-    if (!input) return;
-    const depth = parseFloat(input) || 40;
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o));
-    setViewMode('isometric');
-    setHudFeedback(`Extruded element to depth of ${depth}${unit}.`);
-  };
-
-  const executeTrim = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      newPoints[newPoints.length - 1] = { x: p1.x + (p2.x - p1.x) * 0.75, y: p1.y + (p2.y - p1.y) * 0.75 };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Trim operation calculated successfully.");
-  };
-
-  const executeExtend = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-      newPoints[newPoints.length - 1] = { x: p2.x + ((p2.x - p1.x) / d) * 20, y: p2.y + ((p2.y - p1.y) / d) * 20 };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Extended path vectors forward.");
-  };
-
-  const executeFillet = () => {
-    if (!selectedId) return alert('Select an object first.');
-    const target = objects.find(o => o.id === selectedId);
-    if (!target || target.points.length < 2) return;
-    const input = prompt("Enter Fillet Corner Radius:", "10");
-    if (!input) return;
-    const filletRad = parseFloat(input) || 10;
-
-    const fPts: Point2D[] = [];
-    const total = target.points.length;
-    for (let i = 0; i < total; i++) {
-      const p1 = target.points[i]; const p2 = target.points[(i + 1) % total];
-      fPts.push(p1);
-      if (target.type === 'line' && total === 2 && i === 1) break;
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const shift = Math.min(filletRad, d * 0.4);
-      if (d > 0) fPts.push({ x: p1.x + ((p2.x - p1.x) / d) * shift, y: p1.y + ((p2.y - p1.y) / d) * shift });
-    }
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
-    setHudFeedback("Applied fillet modifier.");
-  };
-
-  const executeRotate = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      const angle = Math.PI / 12; 
-      return { ...o, points: o.points.map(p => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) })) };
-    }));
-    setHudFeedback("Rotated geometry 15 degrees CCW.");
-  };
-
-  const executeScale = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      return { ...o, points: o.points.map(p => ({ x: p.x * 1.25, y: p.y * 1.25 })) };
-    }));
-    setHudFeedback("Scaled model footprint up 25%.");
-  };
-
-  const executeAreaOffset = () => {
-    if (!selectedId) return alert('Select an object first.');
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      return { ...o, points: o.points.map(p => ({ x: p.x + 10, y: p.y + 10 })) };
-    }));
-    setHudFeedback("Calculated uniform segment offset lines.");
-  };
-
-  const executeErase = () => {
-    if (!selectedId) return;
-    updateHistory(objects.filter(o => o.id !== selectedId));
-    setSelectedId(null);
-    setHudFeedback("Deleted element.");
-  };
-
-  const clearWorkspace = () => {
-    setObjects([]);
-    setSelectedId(null);
-    polylinePointsRef.current = [];
-    chainAnchorRef.current = null;
-    updateHistory([]);
-    setHudFeedback("Workspace wiped clean.");
-  };
+  }, [objects, selectedId]);
 
   return (
-    <div className={`w-screen h-screen flex flex-col font-sans overflow-hidden select-none ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
-      
-      {/* HEADER CONTROLS */}
-      <header className={`h-12 px-4 flex items-center justify-between border-b shrink-0 z-10 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
-        <div className="flex items-center gap-3">
-          <span className="text-sm md:text-base font-black tracking-wider text-indigo-500">ENGINE_CAD v3.0</span>
-          <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">{unit.toUpperCase()}</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
-            <input type="checkbox" checked={snapToGrid} onChange={(e) => setSnapToGrid(e.target.checked)} className="accent-indigo-500 rounded" />
-            SNAP
-          </label>
-          <label className="flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
-            <input type="checkbox" checked={orthoMode} onChange={(e) => setOrthoMode(e.target.checked)} className="accent-indigo-500 rounded" />
-            ORTHO
-          </label>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-1 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-white">
-            {isDarkMode ? '🌞' : '🌙'}
-          </button>
-          <button onClick={clearWorkspace} className="px-2 py-1 bg-rose-600 text-white rounded text-[10px] font-bold">
-            RESET
-          </button>
-        </div>
+    <div className="w-screen h-screen flex flex-col bg-slate-900 text-slate-100 font-sans overflow-hidden select-none">
+      {/* HEADER ROW */}
+      <header className="h-14 px-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <span className="font-black text-indigo-500 tracking-wider text-sm">MINI_CAD</span>
+        <button onClick={() => setObjects([])} className="px-3 py-1 bg-rose-600 rounded text-xs font-bold text-white">
+          CLEAR
+        </button>
       </header>
 
-      {/* RESPONSIVE LAYOUT FRAME */}
-      <div className="flex-1 flex flex-col md:flex-row relative w-full h-full min-h-0 overflow-hidden">
-        
-        {/* VIEWPORT CONTROLLER MAIN CONTAINER */}
-        <main 
-          ref={containerRef} 
-          className="flex-1 w-full min-h-[45vh] md:h-full relative overflow-hidden bg-transparent touch-none"
-          style={{ minWidth: '0' }}
-        />
+      {/* RENDER VIEWPORT */}
+      <main ref={containerRef} className="flex-1 w-full bg-slate-950 relative touch-none" />
 
-        {/* SIDE BAR BUTTON CONTROLS (FLEXIBLE ROW ON MOBILE, COLUMN ON DESKTOP) */}
-        <aside className={`w-full md:w-64 p-3 flex flex-row md:flex-col gap-4 border-t md:border-t-0 md:border-l overflow-x-auto md:overflow-y-auto shrink-0 z-10 ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-white border-slate-200'}`}>
-          <div className="min-w-[160px] md:min-w-0">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1.5">Draw Tools</h3>
-            <div className="grid grid-cols-2 gap-1">
-              {(['select', 'pan', 'move', 'line', 'polyline', 'rectangle', 'polygon', 'circle'] as ToolType[]).map((tool) => (
-                <button
-                  key={tool}
-                  onClick={() => {
-                    if (tool === 'select') {
-                      chainAnchorRef.current = null;
-                      polylinePointsRef.current = [];
-                      setObjects(prev => prev.filter(o => o.id !== 'active_pline'));
-                    }
-                    setCurrentTool(tool);
-                  }}
-                  className={`py-1 px-2 text-left rounded capitalize text-[11px] font-bold border ${
-                    currentTool === tool 
-                      ? 'bg-indigo-600 border-indigo-500 text-white' 
-                      : isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
-                  }`}
-                >
-                  {tool}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* CONTROLS AREA */}
+      <footer className="p-3 bg-slate-950 border-t border-slate-800 shrink-0">
+        <div className="flex gap-1.5 overflow-x-auto pb-2">
+          {(['select', 'pan', 'line', 'rectangle', 'circle'] as ToolType[]).map(tool => (
+            <button
+              key={tool}
+              onClick={() => setCurrentTool(tool)}
+              className={`px-4 py-2 rounded text-xs font-bold uppercase border whitespace-nowrap ${
+                currentTool === tool 
+                  ? 'bg-indigo-600 border-indigo-500 text-white' 
+                  : 'bg-slate-900 border-slate-800 text-slate-400'
+              }`}
+            >
+              {tool}
+            </button>
+          ))}
+        </div>
 
-          <div className="min-w-[180px] md:min-w-0 flex flex-col gap-1 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-3 border-slate-800">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Modifiers</h3>
-            <div className="grid grid-cols-2 md:grid-cols-1 gap-1">
-              <button onClick={executeExtrude} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-emerald-600 text-white">⬔ Extrude</button>
-              <button onClick={executeTrim} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">✂ Trim</button>
-              <button onClick={executeExtend} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⤾ Extend</button>
-              <button onClick={executeFillet} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⌒ Fillet</button>
-              <button onClick={executeRotate} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⟳ Rotate</button>
-              <button onClick={executeScale} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">⚖ Scale</button>
-              <button onClick={executeAreaOffset} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-slate-800 border border-slate-700 text-slate-200">☵ Offset</button>
-              <button onClick={executeErase} className="py-1 px-2 text-left rounded text-[11px] font-semibold bg-rose-950/60 text-rose-400 border border-rose-950">🗑 Delete</button>
-            </div>
-          </div>
-
-          <div className="min-w-[120px] md:min-w-0 border-l md:border-l-0 md:border-t pl-3 md:pl-0 md:pt-3 border-slate-800">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Views</h3>
-            <div className="grid grid-cols-2 gap-1">
-              {(['top', 'front', 'side', 'isometric'] as ViewMode[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setViewMode(m)}
-                  className={`py-1 px-1 text-center rounded capitalize text-[11px] font-bold border ${
-                    viewMode === m 
-                      ? 'bg-amber-600 border-amber-500 text-white' 
-                      : isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
-
-        {/* FLOATING STATUS HUD TERMINAL */}
-        <footer className={`absolute bottom-36 md:bottom-3 left-4 right-4 px-4 py-2 rounded-lg border flex items-center justify-between backdrop-blur shadow-2xl z-10 ${
-          isDarkMode ? 'bg-slate-950/90 border-slate-800 text-emerald-400' : 'bg-white/90 border-slate-200 text-emerald-700'
-        }`}>
-          <div className="flex items-center gap-2 font-mono text-[11px]">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>{hudFeedback}</span>
-          </div>
-          <div className="font-mono text-[10px] text-slate-500 flex gap-2">
-            <span>{currentTool.toUpperCase()}</span>
-            <span>|</span>
-            <span>ITEMS: {objects.length}</span>
-          </div>
-        </footer>
-
-      </div>
+        {/* HUD INFORMATION FOOTER */}
+        <div className="mt-2 flex justify-between items-center text-[11px] font-mono text-slate-500 border-t border-slate-900 pt-2">
+          <span className="text-emerald-400">⚡ {hudFeedback}</span>
+          <span>ITEMS: {objects.length}</span>
+        </div>
+      </footer>
     </div>
   );
 }
