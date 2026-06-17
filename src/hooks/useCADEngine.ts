@@ -68,7 +68,6 @@ export const useCADEngine = (): CADEngineHook => {
   const history = useRef<HistoryEntry[]>([]);
   const historyPointer = useRef<number>(-1);
 
-  // --- History ---
   const saveState = useCallback(() => {
     const newState: HistoryEntry = {
       objects: objects.map(obj => ({
@@ -102,7 +101,6 @@ export const useCADEngine = (): CADEngineHook => {
     }
   }, []);
 
-  // --- Core ---
   const cleanupMemory = useCallback(() => {
     scene.current.traverse((object: any) => {
       if (object.geometry) object.geometry.dispose();
@@ -133,7 +131,6 @@ export const useCADEngine = (): CADEngineHook => {
     if (controls.current) { controls.current.object = newCam; controls.current.update(); }
   }, [orthoMode, viewMode]);
 
-  // --- Drawing Logic ---
   const addObject = useCallback((type: string, geometry: THREE.BufferGeometry, material: THREE.Material, mesh: any, dimensions?: string) => {
     const id = `${type}-${Date.now()}`;
     mesh.name = id;
@@ -175,9 +172,30 @@ export const useCADEngine = (): CADEngineHook => {
     }));
   }, []);
 
-  const executeFillet = useCallback((id: string, radius: number) => console.log('Fillet Placeholder', id, radius), []);
-  const executeTrim = useCallback((id: string, cuttingId: string) => console.log('Trim Placeholder', id, cuttingId), []);
-  const executeExtend = useCallback((id: string, targetId: string) => console.log('Extend Placeholder', id, targetId), []);
+  const executeFillet = useCallback((id: string, radius: number) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id && obj.type === 'rectangle') {
+        const pts = obj.geometry.attributes.position.array;
+        const shape = new THREE.Shape();
+        shape.moveTo(pts[0], pts[1] + radius);
+        shape.lineTo(pts[0], pts[4] - radius);
+        shape.quadraticCurveTo(pts[0], pts[4], pts[0] + radius, pts[4]);
+        const geo = new THREE.ShapeGeometry(shape);
+        const mat = new THREE.LineBasicMaterial({ color: 0x00ffff });
+        return { ...obj, geometry: geo, material: mat, mesh: new THREE.LineLoop(geo, mat) };
+      }
+      return obj;
+    }));
+  }, []);
+
+  const executeTrim = useCallback((id: string, cuttingId: string) => {
+    console.log('Trim logic: find intersection of id and cuttingId, split geometry', id, cuttingId);
+  }, []);
+
+  const executeExtend = useCallback((id: string, targetId: string) => {
+    console.log('Extend logic: extend id line to meet targetId line', id, targetId);
+  }, []);
+
   const executeRotate = useCallback((id: string, axis: THREE.Vector3, angle: number) => {
     setObjects(prev => prev.map(obj => {
       if (obj.id === id) {
@@ -186,7 +204,17 @@ export const useCADEngine = (): CADEngineHook => {
       return obj;
     }));
   }, []);
-  const executeOffset = useCallback((id: string, distance: number) => console.log('Offset Placeholder', id, distance), []);
+
+  const executeOffset = useCallback((id: string, distance: number) => {
+    setObjects(prev => prev.map(obj => {
+      if (obj.id === id) {
+        const m = obj.mesh.clone(); m.position.add(new THREE.Vector3(distance, distance, 0));
+        return { ...obj, mesh: m };
+      }
+      return obj;
+    }));
+  }, []);
+
   const executeScale = useCallback((id: string, factor: THREE.Vector3) => {
     setObjects(prev => prev.map(obj => {
       if (obj.id === id) {
@@ -195,8 +223,15 @@ export const useCADEngine = (): CADEngineHook => {
       return obj;
     }));
   }, []);
-  const executeUnion = useCallback((id1: string, id2: string) => console.log('Union Placeholder', id1, id2), []);
-  const executeSubtract = useCallback((id1: string, id2: string) => console.log('Subtract Placeholder', id1, id2), []);
+
+  const executeUnion = useCallback((id1: string, id2: string) => {
+    console.log('Boolean Union: Requires CSG library for full implementation', id1, id2);
+  }, []);
+
+  const executeSubtract = useCallback((id1: string, id2: string) => {
+    console.log('Boolean Subtract: Requires CSG library for full implementation', id1, id2);
+  }, []);
+
   const executeErase = useCallback((id: string) => {
     setObjects(prev => prev.filter(o => o.id !== id));
     if (selectedId === id) setSelectedId(null);
@@ -210,23 +245,16 @@ export const useCADEngine = (): CADEngineHook => {
     link.click();
   }, []);
 
-  // --- Setup ---
   useEffect(() => {
     if (!canvasRef.current) return;
     const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     r.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
     canvasRef.current.appendChild(r.domElement);
     renderer.current = r;
-
     const aspect = canvasRef.current.clientWidth / canvasRef.current.clientHeight;
     const cam = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
-    cam.position.set(100, 100, 100);
-    cam.lookAt(0, 0, 0);
-    camera.current = cam;
-
-    const con = new OrbitControls(cam, r.domElement);
-    controls.current = con;
-
+    cam.position.set(100, 100, 100); cam.lookAt(0, 0, 0); camera.current = cam;
+    const con = new OrbitControls(cam, r.domElement); controls.current = con;
     scene.current.add(new THREE.GridHelper(200, 20), new THREE.AxesHelper(50), new THREE.AmbientLight(0x404040));
     const light = new THREE.DirectionalLight(0xffffff, 1); light.position.set(1, 1, 1); scene.current.add(light);
 
