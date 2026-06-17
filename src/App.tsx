@@ -20,7 +20,7 @@ const App: React.FC = () => {
   const ref = useRef<HTMLDivElement>(null);
   const finp = useRef<HTMLInputElement>(null);
   const e = useCADEngine();
-  const { state, initScene, undo, redo, syncCameraMatrix, toggleOrthoMode, setSnapEnabled, setGridVisible, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene } = e;
+  const { state, initScene, undo, redo, lockView, toggleOrthoMode, setSnapEnabled, setGridVisible, executeExtrude, executeFillet, executeRotate, executeScale, executeErase, handleTouchStart, handleTouchMove, handleTouchEnd, handleResize, exportScene, importScene } = e;
   const [ui, setUi] = useState(true);
 
   useEffect(() => { if (ref.current) initScene(ref.current); window.addEventListener('resize', handleResize); return () => window.removeEventListener('resize', handleResize); }, [initScene, handleResize]);
@@ -36,10 +36,10 @@ const App: React.FC = () => {
       <input ref={finp} type="file" accept=".json" style={{ display: 'none' }} onChange={onFile} />
       {ui && <>
         <div style={S.bar}>
-          <button onClick={() => syncCameraMatrix('isometric')} style={B(state.viewMode === 'isometric')}>3D</button>
-          <button onClick={() => syncCameraMatrix('top')} style={B(state.viewMode === 'top')}>Top</button>
-          <button onClick={() => syncCameraMatrix('front')} style={B(state.viewMode === 'front')}>Front</button>
-          <button onClick={() => syncCameraMatrix('side')} style={B(state.viewMode === 'side')}>Side</button>
+          <button onClick={() => lockView('isometric')} style={B(state.viewMode === 'isometric')}>3D</button>
+          <button onClick={() => lockView('top')} style={B(state.viewMode === 'top')}>Top</button>
+          <button onClick={() => lockView('front')} style={B(state.viewMode === 'front')}>Front</button>
+          <button onClick={() => lockView('side')} style={B(state.viewMode === 'side')}>Side</button>
           <div style={Sep} />
           <button onClick={toggleOrthoMode} style={{ ...B(state.orthoMode), backgroundColor: state.orthoMode ? '#e94560' : '#0f3460' }}>{state.orthoMode ? 'Ortho' : 'Persp'}</button>
           <div style={Sep} />
@@ -62,7 +62,7 @@ const App: React.FC = () => {
       <div ref={ref} style={S.canvas} onDoubleClick={() => setUi(!ui)} />
       {ui && <>
         <div style={S.bbar}>
-          <button onClick={() => sel && executeExtrude(state.selectedId!, 1)} style={AB} disabled={!sel}>Extrude</button>
+          <button onClick={() => sel && executeExtrude(state.selectedId!, 2)} style={AB} disabled={!sel}>Extrude</button>
           <button onClick={() => sel && executeFillet(state.selectedId!, 0.3)} style={AB} disabled={!sel}>Fillet</button>
           <button onClick={() => sel && executeRotate(state.selectedId!, 'y', Math.PI / 4)} style={AB} disabled={!sel}>Rotate</button>
           <button onClick={() => sel && executeScale(state.selectedId!, 1.2, 1.2, 1.2)} style={AB} disabled={!sel}>Scale</button>
@@ -70,7 +70,7 @@ const App: React.FC = () => {
         </div>
         <div style={S.status}>
           <span>{state.activeTool}</span>
-          <span>{state.isDrawing ? 'DRAW' : ''}</span>
+          <span>{state.touchCount > 1 ? 'CAM' : state.isDrawing ? 'DRAW' : ''}</span>
           <span>N:{state.objects.length}</span>
           <span>{state.viewMode}{state.orthoMode ? '(O)' : '(P)'}</span>
           <span>{state.selectedId ? '#' + state.selectedId.slice(-4) : '-'}</span>
