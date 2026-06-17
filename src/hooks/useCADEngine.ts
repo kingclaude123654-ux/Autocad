@@ -1,572 +1,685 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
+// --- Type Definitions ---
 export type ViewMode = 'top' | 'front' | 'side' | 'isometric';
-export type ToolType = string;
-
-export interface Point2D {
-  x: number;
-  y: number;
-}
-
-export interface CADObject {
+export type CADObject = {
   id: string;
   type: string;
-  points: Point2D[];
-  color: string;
-  layer: string;
-  is3D: boolean;
-  extrusionHeight?: number;
-  properties?: Record<string, any>;
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  mesh: THREE.Mesh;
+};
+
+export type HistoryEntry = {
+  objects: CADObject[];
+  selectedId: string | null;
+  // Add other relevant state for undo/redo
+};
+
+export interface CADEngineHook {
+  objects: CADObject[];
+  selectedId: string | null;
+  viewMode: ViewMode;
+  orthoMode: boolean;
+  canvasRef: React.RefObject<HTMLDivElement>;
+  // State setters
+  setOrthoMode: (mode: boolean) => void;
+  setViewMode: (mode: ViewMode) => void;
+  // Drawing tools
+  drawLine: (start: THREE.Vector3, end: THREE.Vector3) => void;
+  drawPolyline: (points: THREE.Vector3[]) => void;
+  drawRectangle: (p1: THREE.Vector3, p2: THREE.Vector3) => void;
+  drawCircle: (center: THREE.Vector3, radius: number) => void;
+  // Selection and manipulation
+  selectObject: (id: string | null) => void;
+  moveObject: (id: string, delta: THREE.Vector3) => void;
+  // Transformation features
+  executeExtrude: (id: string, depth: number) => void;
+  executeFillet: (id: string, radius: number) => void;
+  executeTrim: (id: string, cuttingId: string) => void;
+  executeExtend: (id: string, targetId: string) => void;
+  executeRotate: (id: string, axis: THREE.Vector3, angle: number) => void;
+  executeOffset: (id: string, distance: number) => void;
+  executeScale: (id: string, factor: THREE.Vector3) => void;
+  executeUnion: (id1: string, id2: string) => void;
+  executeSubtract: (id1: string, id2: string) => void;
+  executeErase: (id: string) => void;
+  // History
+  undo: () => void;
+  redo: () => void;
+  // Memory management
+  cleanupMemory: () => void;
 }
 
-export function useCADEngine() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+export const useCADEngine = (): CADEngineHook => {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const scene = useRef(new THREE.Scene());
+  const renderer = useRef<THREE.WebGLRenderer | null>(null);
+  const camera = useRef<THREE.PerspectiveCamera | THREE.OrthographicCamera | null>(null);
+  const controls = useRef<OrbitControls | null>(null);
+
   const [objects, setObjects] = useState<CADObject[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [currentTool, setCurrentTool] = useState<ToolType>('select');
-  const [viewMode, setViewMode] = useState<ViewMode>('top');
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
-  const [hudFeedback, setHudFeedback] = useState<string>('Console: Workspace Active');
-
-  // Dimension Calibration States
-  const [unit, setUnit] = useState<string>('mm');
-  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('isometric');
   const [orthoMode, setOrthoMode] = useState<boolean>(false);
-  const [workspaceSize, setWorkspaceSize] = useState<number>(400);
-  const [gridSpacing, setGridSpacing] = useState<number>(10);
 
-  // Core Storage & Clipboard Trackers
-  const [clipboard, setClipboard] = useState<CADObject | null>(null);
-  const [history, setHistory] = useState<CADObject[][]>([[]]);
-  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  const history = useRef<HistoryEntry[]>([]);
+  const historyPointer = useRef<number>(-1);
 
-  // Protected Gesture Pointer References
-  const isDrawingRef = useRef<boolean>(false);
-  const startPointRef = useRef<Point2D | null>(null);
-  const currentPointRef = useRef<Point2D | null>(null);
-  const chainAnchorRef = useRef<Point2D | null>(null);
-  const moveStartPointRef = useRef<Point2D | null>(null);
-  const polylinePointsRef = useRef<Point2D[]>([]);
+  // --- History Management ---
+  const saveState = useCallback(() => {
+    const newState: HistoryEntry = {
+      objects: objects.map(obj => ({
+        ...obj,
+        geometry: obj.geometry.clone(), // Deep clone geometry
+        material: obj.material.clone(), // Deep clone material
+        mesh: obj.mesh.clone(), // Deep clone mesh
+      })),
+      selectedId,
+    };
+    // Clear redo history
+    history.current = history.current.slice(0, historyPointer.current + 1);
+    history.current.push(newState);
+    historyPointer.current = history.current.length - 1;
+  }, [objects, selectedId]);
 
-  // Smooth View Matrix Viewport Vectors
-  const cameraOffsetRef = useRef<THREE.Vector3>(new THREE.Vector3(0, 0, 0));
-  const cameraZoomRef = useRef<number>(1.2);
-  const isPanningRef = useRef<boolean>(false);
-  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  // Three.js Pipeline Structural Nodes
-  const sceneRef = useRef<THREE.Scene>(new THREE.Scene());
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const visualObjectsRef = useRef<Map<string, THREE.Object3D>>(new Map());
-  const previewLineRef = useRef<THREE.Line | null>(null);
-  const gridHelperRef = useRef<THREE.GridHelper | null>(null);
-
-  const generateId = () => Math.random().toString(36).substring(2, 9);
-
-  // INSTANT VIEW MATRIX REFRESH (No delays, instant synchronization)
-  const syncCameraMatrix = (forcedMode?: ViewMode) => {
-    if (!cameraRef.current) return;
-    const activeMode = forcedMode || viewMode;
-    const offset = cameraOffsetRef.current;
-    const dist = 240 * cameraZoomRef.current;
-
-    if (activeMode === 'top') {
-      cameraRef.current.position.set(offset.x, dist, offset.z + 0.001);
-    } else if (activeMode === 'front') {
-      cameraRef.current.position.set(offset.x, offset.y, dist);
-    } else if (activeMode === 'side') {
-      cameraRef.current.position.set(dist, offset.y, offset.z);
-    } else {
-      cameraRef.current.position.set(offset.x + dist * 0.7, offset.y + dist * 0.7, offset.z + dist * 0.7);
+  const undo = useCallback(() => {
+    if (historyPointer.current > 0) {
+      historyPointer.current--;
+      const prevState = history.current[historyPointer.current];
+      setObjects(prevState.objects);
+      setSelectedId(prevState.selectedId);
+      // Re-render scene based on restored state
+      // This will be handled by useEffect for objects
     }
-    cameraRef.current.lookAt(offset.x, offset.y, offset.z);
-    cameraRef.current.updateProjectionMatrix();
-
-    if (rendererRef.current) {
-      rendererRef.current.render(sceneRef.current, cameraRef.current);
-    }
-  };
-
-  const updateHistory = (nextState: CADObject[]) => {
-    const trimmed = history.slice(0, historyIndex + 1);
-    setHistory([...trimmed, nextState]);
-    setHistoryIndex(trimmed.length);
-    setObjects(nextState);
-  };
-
-  const get3DPoint = (clientX: number, clientY: number): Point2D | null => {
-    if (!containerRef.current || !cameraRef.current) return null;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    const y = -((clientY - rect.top) / rect.height) * 2 + 1;
-
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
-
-    let norm = new THREE.Vector3(0, 1, 0);
-    if (viewMode === 'front') norm.set(0, 0, 1);
-    if (viewMode === 'side') norm.set(1, 0, 0);
-
-    const plane = new THREE.Plane(norm, 0);
-    const intersect = new THREE.Vector3();
-    if (raycaster.ray.intersectPlane(plane, intersect)) {
-      let calcX = intersect.x;
-      let calcY = (viewMode === 'front' || viewMode === 'side') ? intersect.y : intersect.z;
-
-      if (snapToGrid) {
-        calcX = Math.round(calcX / gridSpacing) * gridSpacing;
-        calcY = Math.round(calcY / gridSpacing) * gridSpacing;
-      }
-      return { x: calcX, y: calcY };
-    }
-    return null;
-  };
-
-  // FULLY CORE RECONSTRUCTED INTERACTION MECHANICS
-  const handlePointerDown = (clientX: number, clientY: number, isRightClick = false) => {
-    if (isRightClick || currentTool === 'pan') {
-      isPanningRef.current = true;
-      panStartRef.current = { x: clientX, y: clientY };
-      return;
-    }
-
-    const pts = get3DPoint(clientX, clientY);
-    if (!pts) return;
-
-    if (currentTool === 'select') {
-      const found = objects.find((o) => o && o.points && o.points.some((p) => Math.abs(p.x - pts.x) < (gridSpacing * 2.5) && Math.abs(p.y - pts.y) < (gridSpacing * 2.5)));
-      setSelectedId(found ? found.id : null);
-      return;
-    }
-
-    if (currentTool === 'move') {
-      if (!selectedId) return;
-      isDrawingRef.current = true;
-      moveStartPointRef.current = pts;
-      return;
-    }
-
-    isDrawingRef.current = true;
-    if (currentTool === 'polyline') {
-      if (polylinePointsRef.current.length === 0) { polylinePointsRef.current.push(pts); }
-      startPointRef.current = polylinePointsRef.current[polylinePointsRef.current.length - 1];
-    } else {
-      startPointRef.current = chainAnchorRef.current ? chainAnchorRef.current : pts;
-    }
-    currentPointRef.current = pts;
-  };
-
-  const handlePointerMove = (clientX: number, clientY: number) => {
-    if (isPanningRef.current) {
-      const dx = clientX - panStartRef.current.x; const dy = clientY - panStartRef.current.y;
-      panStartRef.current = { x: clientX, y: clientY };
-      
-      const factor = 0.35 * cameraZoomRef.current;
-      if (viewMode === 'top') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.z -= dy * factor; }
-      else if (viewMode === 'front') { cameraOffsetRef.current.x -= dx * factor; cameraOffsetRef.current.y += dy * factor; }
-      else if (viewMode === 'side') { cameraOffsetRef.current.z += dx * factor; cameraOffsetRef.current.y += dy * factor; }
-      syncCameraMatrix();
-      return;
-    }
-
-    if (!isDrawingRef.current || !startPointRef.current) return;
-    let pts = get3DPoint(clientX, clientY);
-    if (!pts) return;
-
-    if (orthoMode && currentTool !== 'move') {
-      const dx = Math.abs(pts.x - startPointRef.current.x);
-      const dy = Math.abs(pts.y - startPointRef.current.y);
-      pts = dx > dy ? { x: pts.x, y: startPointRef.current.y } : { x: startPointRef.current.x, y: pts.y };
-    }
-
-    if (currentTool === 'move' && moveStartPointRef.current && selectedId) {
-      const dx = pts.x - moveStartPointRef.current.x; const dy = pts.y - moveStartPointRef.current.y;
-      moveStartPointRef.current = pts;
-      setObjects((prev) => prev.map((o) => o.id === selectedId ? { ...o, points: o.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } : o));
-      return;
-    }
-
-    currentPointRef.current = pts;
-    const origin = startPointRef.current;
-    const len = Math.round(Math.hypot(pts.x - origin.x, pts.y - origin.y));
-
-    if (previewLineRef.current) {
-      const pPts: THREE.Vector3[] = [];
-      if (currentTool === 'line' || currentTool === 'polyline') {
-        pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y));
-      } else if (currentTool === 'rectangle') {
-        pPts.push(new THREE.Vector3(origin.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, origin.y), new THREE.Vector3(pts.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, pts.y), new THREE.Vector3(origin.x, 0.6, origin.y));
-      } else if (currentTool === 'polygon') {
-        for (let i = 0; i <= 3; i++) { const alpha = (i / 3) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
-      } else if (currentTool === 'circle') {
-        for (let i = 0; i <= 64; i++) { const alpha = (i / 64) * Math.PI * 2; pPts.push(new THREE.Vector3(origin.x + Math.cos(alpha) * len, 0.6, origin.y + Math.sin(alpha) * len)); }
-      }
-      previewLineRef.current.geometry.setFromPoints(pPts);
-    }
-  };
-
-  const handlePointerUp = () => {
-    if (isPanningRef.current) { isPanningRef.current = false; return; }
-    if (!isDrawingRef.current) return;
-
-    isDrawingRef.current = false;
-    if (currentTool === 'move') { moveStartPointRef.current = null; updateHistory(objects); return; }
-    if (!startPointRef.current || !currentPointRef.current) return;
-
-    const origin = startPointRef.current;
-    const end = currentPointRef.current;
-
-    const len = Math.round(Math.hypot(end.x - origin.x, end.y - origin.y));
-    if (len < 1) return;
-
-    let newObj: CADObject | null = null;
-
-    if (currentTool === 'line') {
-      newObj = { id: generateId(), type: 'line', points: [origin, end], color: '#3b82f6', layer: '0', is3D: false, properties: { length: len } };
-      chainAnchorRef.current = end;
-    } else if (currentTool === 'polyline') {
-      polylinePointsRef.current.push(end);
-      const freezePoints = [...polylinePointsRef.current];
-      setObjects((prev) => [
-        ...prev.filter(o => o.id !== 'active_pline'),
-        { id: 'active_pline', type: 'polyline', points: freezePoints, color: '#38bdf8', layer: '0', is3D: false }
-      ]);
-      startPointRef.current = end;
-      isDrawingRef.current = true; 
-      return; 
-    } else if (currentTool === 'rectangle') {
-      newObj = { id: generateId(), type: 'rectangle', points: [{ x: origin.x, y: origin.y }, { x: end.x, y: origin.y }, { x: end.x, y: end.y }, { x: origin.x, y: end.y }], color: '#10b981', layer: '0', is3D: false, properties: { width: Math.abs(end.x - origin.x), height: Math.abs(end.y - origin.y) } };
-    } else if (currentTool === 'polygon') {
-      const pts: Point2D[] = [];
-      for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'polygon', points: pts, color: '#f59e0b', layer: '0', is3D: false };
-    } else if (currentTool === 'circle') {
-      const pts: Point2D[] = [];
-      for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * len, y: origin.y + Math.sin(a) * len }); }
-      newObj = { id: generateId(), type: 'circle', points: pts, color: '#a855f7', layer: '0', is3D: false, properties: { radius: len } };
-    }
-
-    // ACCURATE APPEND BLOCK: Safeguards previous canvas elements from dropping out of scope
-    if (newObj) {
-      const activeStateList = objects.filter(o => o && o.id !== 'active_pline');
-      updateHistory([...activeStateList, newObj]);
-      setSelectedId(newObj.id);
-    }
-
-    startPointRef.current = null; currentPointRef.current = null;
-    if (previewLineRef.current) previewLineRef.current.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-  };
-
-  useEffect(() => {
-    const selectedUnit = prompt("Specify primary drawing workspace dimensions unit system (mm, cm, m, foot):", "mm");
-    let u = 'mm';
-    if (selectedUnit && ['mm', 'cm', 'm', 'foot'].includes(selectedUnit.toLowerCase())) { u = selectedUnit.toLowerCase(); }
-    setUnit(u);
-    let spacing = 10; let totalSize = 500;
-    if (u === 'cm') { spacing = 5; totalSize = 300; }
-    else if (u === 'm') { spacing = 1; totalSize = 50; }
-    else if (u === 'foot') { spacing = 1; totalSize = 100; }
-    setGridSpacing(spacing); setWorkspaceSize(totalSize);
-    setHudFeedback(`Workspace configured: ${u.toUpperCase()} Mode. Ready.`);
   }, []);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const width = containerRef.current.clientWidth || window.innerWidth;
-    const height = containerRef.current.clientHeight || window.innerHeight;
+  const redo = useCallback(() => {
+    if (historyPointer.current < history.current.length - 1) {
+      historyPointer.current++;
+      const nextState = history.current[historyPointer.current];
+      setObjects(nextState.objects);
+      setSelectedId(nextState.selectedId);
+      // Re-render scene based on restored state
+      // This will be handled by useEffect for objects
+    }
+  }, []);
 
-    if (rendererRef.current) {
-      if (containerRef.current.contains(rendererRef.current.domElement)) {
-        containerRef.current.removeChild(rendererRef.current.domElement);
+  // --- Memory Management ---
+  const cleanupMemory = useCallback(() => {
+    scene.current.children.forEach(child => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach(material => material.dispose());
+        } else {
+          child.material.dispose();
+        }
+        scene.current.remove(child);
       }
-      rendererRef.current.dispose();
+    });
+    renderer.current?.dispose();
+    // Note: Controls do not have a dispose method in OrbitControls
+  }, []);
+
+  // --- Camera & View Management ---
+  const syncCameraMatrix = useCallback(() => {
+    if (!camera.current || !renderer.current || !controls.current) return;
+
+    const aspect = window.innerWidth / window.innerHeight; // Adjust as needed
+    const frustumSize = 100; // For orthographic camera
+
+    if (orthoMode) {
+      camera.current = new THREE.OrthographicCamera(
+        frustumSize * aspect / -2,
+        frustumSize * aspect / 2,
+        frustumSize / 2,
+        frustumSize / -2,
+        0.1,
+        1000
+      );
+    } else {
+      camera.current = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
     }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    containerRef.current.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
+    // Set camera position based on viewMode
+    switch (viewMode) {
+      case 'top':
+        camera.current.position.set(0, 100, 0);
+        camera.current.up.set(0, 0, 1);
+        break;
+      case 'front':
+        camera.current.position.set(0, 0, 100);
+        camera.current.up.set(0, 1, 0);
+        break;
+      case 'side':
+        camera.current.position.set(100, 0, 0);
+        camera.current.up.set(0, 1, 0);
+        break;
+      case 'isometric':
+      default:
+        camera.current.position.set(100, 100, 100);
+        camera.current.up.set(0, 1, 0);
+        break;
+    }
+    camera.current.lookAt(scene.current.position);
+    controls.current.object = camera.current; // Update controls with new camera
+    controls.current.update();
+    renderer.current.setSize(window.innerWidth, window.innerHeight); // Adjust as needed
+    camera.current.updateProjectionMatrix();
+  }, [orthoMode, viewMode]);
 
-    const scene = sceneRef.current;
-    scene.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
+  // --- Drawing Tools (Placeholders for now) ---
+  const drawLine = useCallback((start: THREE.Vector3, end: THREE.Vector3) => {
+    const material = new THREE.LineBasicMaterial({ color: 0x0000ff });
+    const points = [start, end];
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const line = new THREE.Line(geometry, material);
+    line.name = `line-${Date.now()}`;
+    setObjects(prev => [...prev, { id: line.name, type: 'line', geometry, material, mesh: line }]);
+  }, []);
 
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
-    cameraRef.current = camera;
-    syncCameraMatrix();
+  const drawPolyline = useCallback((points: THREE.Vector3[]) => {
+    const material = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const polyline = new THREE.Line(geometry, material);
+    polyline.name = `polyline-${Date.now()}`;
+    setObjects(prev => [...prev, { id: polyline.name, type: 'polyline', geometry, material, mesh: polyline }]);
+  }, []);
 
-    scene.clear(); 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.95));
-    const dl = new THREE.DirectionalLight(0xffffff, 0.75);
-    dl.position.set(150, 350, 150);
-    scene.add(dl);
+  const drawRectangle = useCallback((p1: THREE.Vector3, p2: THREE.Vector3) => {
+    const material = new THREE.LineBasicMaterial({ color: 0xff00ff });
+    const shape = new THREE.Shape();
+    shape.moveTo(p1.x, p1.y);
+    shape.lineTo(p2.x, p1.y);
+    shape.lineTo(p2.x, p2.y);
+    shape.lineTo(p1.x, p2.y);
+    shape.lineTo(p1.x, p1.y);
+    const geometry = new THREE.BufferGeometry().setFromPoints(shape.getPoints());
+    const rectangle = new THREE.Line(geometry, material);
+    rectangle.name = `rectangle-${Date.now()}`;
+    setObjects(prev => [...prev, { id: rectangle.name, type: 'rectangle', geometry, material, mesh: rectangle }]);
+  }, []);
 
-    const divisions = Math.round(workspaceSize / gridSpacing);
-    const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
-    scene.add(grid);
-    gridHelperRef.current = grid;
+  const drawCircle = useCallback((center: THREE.Vector3, radius: number) => {
+    const material = new THREE.LineBasicMaterial({ color: 0xffff00 });
+    const geometry = new THREE.CircleGeometry(radius, 32);
+    geometry.vertices.shift(); // Remove center vertex
+    const circle = new THREE.LineLoop(geometry, material);
+    circle.position.copy(center);
+    circle.name = `circle-${Date.now()}`;
+    setObjects(prev => [...prev, { id: circle.name, type: 'circle', geometry, material, mesh: circle }]);
+  }, []);
 
-    const pMat = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 3, depthTest: false });
-    const previewLine = new THREE.Line(new THREE.BufferGeometry(), pMat);
-    previewLine.renderOrder = 999;
-    scene.add(previewLine);
-    previewLineRef.current = previewLine;
+  // --- Selection and Manipulation (Placeholders for now) ---
+  const selectObject = useCallback((id: string | null) => {
+    setSelectedId(id);
+  }, []);
 
-    const host = containerRef.current;
-    const onMouseDown = (e: MouseEvent) => { e.preventDefault(); handlePointerDown(e.clientX, e.clientY, e.button === 2); };
-    const onMouseMove = (e: MouseEvent) => { handlePointerMove(e.clientX, e.clientY); };
-    const onMouseUp = () => { handlePointerUp(); };
+  const moveObject = useCallback((id: string, delta: THREE.Vector3) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj =>
+        obj.id === id
+          ? { ...obj, mesh: obj.mesh.clone().translateOnAxis(delta.normalize(), delta.length()) }
+          : obj
+      )
+    );
+  }, []);
 
-    host.addEventListener('mousedown', onMouseDown);
-    host.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+  // --- Transformation Features (Placeholders for now) ---
+  const executeExtrude = useCallback((id: string, depth: number) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj => {
+        if (obj.id === id && obj.mesh instanceof THREE.Line) {
+          const points = (obj.geometry as THREE.BufferGeometry).attributes.position.array;
+          const shape = new THREE.Shape();
+          for (let i = 0; i < points.length; i += 3) {
+            if (i === 0) {
+              shape.moveTo(points[i], points[i + 1]);
+            } else {
+              shape.lineTo(points[i], points[i + 1]);
+            }
+          }
+          const extrudeSettings = {
+            steps: 1,
+            depth: depth,
+            bevelEnabled: false,
+          };
+          const extrudedGeometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+          const extrudedMesh = new THREE.Mesh(extrudedGeometry, new THREE.MeshPhongMaterial({ color: obj.material.color }));
+          extrudedMesh.name = obj.id;
+          return { ...obj, geometry: extrudedGeometry, material: extrudedMesh.material, mesh: extrudedMesh };
+        }
+        return obj;
+      })
+    );
+  }, []);
 
-    const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      cameraZoomRef.current = Math.max(0.05, Math.min(cameraZoomRef.current * (e.deltaY > 0 ? 1.08 : 0.92), 30.0));
-      syncCameraMatrix();
+  const executeFillet = useCallback((id: string, radius: number) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj => {
+        if (obj.id === id && (obj.mesh instanceof THREE.Line || obj.mesh instanceof THREE.LineLoop)) {
+          const oldGeometry = obj.geometry as THREE.BufferGeometry;
+          const positions = oldGeometry.attributes.position.array;
+          const newPositions: number[] = [];
+
+          if (positions.length < 6) return obj; // Need at least two points for a line segment
+
+          for (let i = 0; i < positions.length; i += 3) {
+            const p1 = new THREE.Vector3(positions[i - 3], positions[i - 2], positions[i - 1]);
+            const p2 = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+            const p3 = new THREE.Vector3(positions[i + 3], positions[i + 4], positions[i + 5]);
+
+            if (i === 0) {
+              newPositions.push(p2.x, p2.y, p2.z);
+              continue;
+            }
+            if (i === positions.length - 3) {
+              newPositions.push(p2.x, p2.y, p2.z);
+              continue;
+            }
+
+            // Simplified fillet: replace sharp corner with a curve
+            const v1 = new THREE.Vector3().subVectors(p1, p2).normalize();
+            const v2 = new THREE.Vector3().subVectors(p3, p2).normalize();
+
+            const angle = v1.angleTo(v2);
+            if (angle > 0.01) { // Only fillet if there's a significant angle
+              const curvePoints = [];
+              const segments = 8; // Number of segments for the fillet curve
+              const startAngle = Math.atan2(v1.y, v1.x);
+              const endAngle = Math.atan2(v2.y, v2.x);
+
+              const center = p2.clone().add(v1.clone().add(v2).normalize().multiplyScalar(radius / Math.sin(angle / 2)));
+
+              for (let j = 0; j <= segments; j++) {
+                const t = j / segments;
+                const currentAngle = startAngle + (endAngle - startAngle) * t;
+                const x = center.x + radius * Math.cos(currentAngle);
+                const y = center.y + radius * Math.sin(currentAngle);
+                curvePoints.push(x, y, p2.z); // Assuming 2D fillet for simplicity
+              }
+              newPositions.push(...curvePoints);
+            } else {
+              newPositions.push(p2.x, p2.y, p2.z);
+            }
+          }
+
+          const newGeometry = new THREE.BufferGeometry();
+          newGeometry.setAttribute(
+            'position',
+            new THREE.Float32BufferAttribute(newPositions, 3)
+          );
+          const newMesh = new THREE.Line(newGeometry, obj.material);
+          newMesh.name = obj.id;
+          return { ...obj, geometry: newGeometry, mesh: newMesh };
+        }
+        return obj;
+      })
+    );
+  }, []);
+
+  const executeTrim = useCallback((id: string, cuttingId: string) => {
+    setObjects(prevObjects => {
+      const trimmedObject = prevObjects.find(obj => obj.id === id);
+      const cuttingObject = prevObjects.find(obj => obj.id === cuttingId);
+
+      if (!trimmedObject || !cuttingObject || !(trimmedObject.mesh instanceof THREE.Line) || !(cuttingObject.mesh instanceof THREE.Line)) {
+        console.warn("Trim operation currently only supports lines and requires both objects to exist.");
+        return prevObjects;
+      }
+
+      const trimmedPositions = (trimmedObject.geometry as THREE.BufferGeometry).attributes.position.array;
+      const cuttingPositions = (cuttingObject.geometry as THREE.BufferGeometry).attributes.position.array;
+
+      const newPositions: number[] = [];
+      const intersectionPoints: THREE.Vector3[] = [];
+
+      // Helper to find line-line intersection (2D for simplicity)
+      const findIntersection = (p1: THREE.Vector2, p2: THREE.Vector2, p3: THREE.Vector2, p4: THREE.Vector2): THREE.Vector2 | null => {
+        const den = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+        if (den === 0) return null; // Lines are parallel or collinear
+
+        const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / den;
+        const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / den;
+
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+          return new THREE.Vector2(p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y));
+        }
+        return null;
+      };
+
+      // Iterate through segments of the trimmed object
+      for (let i = 0; i < trimmedPositions.length - 3; i += 3) {
+        const seg1_p1 = new THREE.Vector2(trimmedPositions[i], trimmedPositions[i + 1]);
+        const seg1_p2 = new THREE.Vector2(trimmedPositions[i + 3], trimmedPositions[i + 4]);
+
+        let segmentCut = false;
+        // Check intersection with cutting object segments
+        for (let j = 0; j < cuttingPositions.length - 3; j += 3) {
+          const seg2_p1 = new THREE.Vector2(cuttingPositions[j], cuttingPositions[j + 1]);
+          const seg2_p2 = new THREE.Vector2(cuttingPositions[j + 3], cuttingPositions[j + 4]);
+
+          const intersection = findIntersection(seg1_p1, seg1_p2, seg2_p1, seg2_p2);
+          if (intersection) {
+            intersectionPoints.push(new THREE.Vector3(intersection.x, intersection.y, trimmedPositions[i + 2]));
+            segmentCut = true;
+            break; // Segment is cut, no need to check further cutting segments
+          }
+        }
+
+        if (!segmentCut) {
+          // If no intersection, keep the segment
+          newPositions.push(trimmedPositions[i], trimmedPositions[i + 1], trimmedPositions[i + 2]);
+          if (i === trimmedPositions.length - 6) { // Add the last point of the last segment
+            newPositions.push(trimmedPositions[i + 3], trimmedPositions[i + 4], trimmedPositions[i + 5]);
+          }
+        } else {
+          // If cut, we need to decide which part to keep. For simplicity, we'll remove the entire segment.
+          // A more advanced implementation would split the segment at the intersection point.
+          console.log(`Segment from (${seg1_p1.x}, ${seg1_p1.y}) to (${seg1_p2.x}, ${seg1_p2.y}) was cut.`);
+        }
+      }
+
+      if (newPositions.length === 0) {
+        // If the entire object is trimmed, remove it
+        return prevObjects.filter(obj => obj.id !== id);
+      } else {
+        const newGeometry = new THREE.BufferGeometry();
+        newGeometry.setAttribute(
+          'position',
+          new THREE.Float32BufferAttribute(newPositions, 3)
+        );
+        const newMesh = new THREE.Line(newGeometry, trimmedObject.material);
+        newMesh.name = trimmedObject.id;
+        return prevObjects.map(obj => (obj.id === id ? { ...obj, geometry: newGeometry, mesh: newMesh } : obj));
+      }
+    });
+  }, []);
+
+  const executeExtend = useCallback((id: string, targetId: string) => {
+    setObjects(prevObjects => {
+      const lineToExtend = prevObjects.find(obj => obj.id === id);
+      const targetLine = prevObjects.find(obj => obj.id === targetId);
+
+      if (!lineToExtend || !targetLine || !(lineToExtend.mesh instanceof THREE.Line) || !(targetLine.mesh instanceof THREE.Line)) {
+        console.warn("Extend operation currently only supports lines and requires both objects to exist.");
+        return prevObjects;
+      }
+
+      const lineToExtendPositions = (lineToExtend.geometry as THREE.BufferGeometry).attributes.position.array;
+      const targetLinePositions = (targetLine.geometry as THREE.BufferGeometry).attributes.position.array;
+
+      const p1 = new THREE.Vector2(lineToExtendPositions[0], lineToExtendPositions[1]);
+      const p2 = new THREE.Vector2(lineToExtendPositions[lineToExtendPositions.length - 3], lineToExtendPositions[lineToExtendPositions.length - 2]);
+
+      const p3 = new THREE.Vector2(targetLinePositions[0], targetLinePositions[1]);
+      const p4 = new THREE.Vector2(targetLinePositions[targetLinePositions.length - 3], targetLinePositions[targetLinePositions.length - 2]);
+
+      // Helper to find line-line intersection (2D for simplicity, allowing extension beyond segments)
+      const findLineLineIntersection = (l1p1: THREE.Vector2, l1p2: THREE.Vector2, l2p1: THREE.Vector2, l2p2: THREE.Vector2): THREE.Vector2 | null => {
+        const den = (l1p1.x - l1p2.x) * (l2p1.y - l2p2.y) - (l1p1.y - l1p2.y) * (l2p1.x - l2p2.x);
+        if (den === 0) return null; // Lines are parallel or collinear
+
+        const t = ((l1p1.x - l2p1.x) * (l2p1.y - l2p2.y) - (l1p1.y - l2p1.y) * (l2p1.x - l2p2.x)) / den;
+        const u = -((l1p1.x - l1p2.x) * (l1p1.y - l2p1.y) - (l1p1.y - l1p2.y) * (l1p1.x - l2p1.x)) / den;
+
+        // For extension, we only care if the intersection point lies on the target line segment (u between 0 and 1)
+        // and if the intersection point is in the direction of extension for the line to extend (t > 0 or t < 0 depending on which end is extended)
+        if (u >= 0 && u <= 1) {
+          return new THREE.Vector2(l1p1.x + t * (l1p2.x - l1p1.x), l1p1.y + t * (l1p2.y - l1p1.y));
+        }
+        return null;
+      };
+
+      const intersection = findLineLineIntersection(p1, p2, p3, p4);
+
+      if (intersection) {
+        const newPositions = [...lineToExtendPositions.slice(0, lineToExtendPositions.length - 3), intersection.x, intersection.y, lineToExtendPositions[lineToExtendPositions.length - 1]];
+        const newGeometry = new THREE.BufferGeometry();
+        newGeometry.setAttribute(
+          'position',
+          new THREE.Float32BufferAttribute(newPositions, 3)
+        );
+        const newMesh = new THREE.Line(newGeometry, lineToExtend.material);
+        newMesh.name = lineToExtend.id;
+        return prevObjects.map(obj => (obj.id === id ? { ...obj, geometry: newGeometry, mesh: newMesh } : obj));
+      } else {
+        console.warn("No intersection found for extension.");
+        return prevObjects;
+      }
+    });
+  }, []);
+
+  const executeRotate = useCallback((id: string, axis: THREE.Vector3, angle: number) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj =>
+        obj.id === id
+          ? { ...obj, mesh: obj.mesh.clone().rotateOnAxis(axis.normalize(), angle) }
+          : obj
+      )
+    );
+  }, []);
+
+  const executeOffset = useCallback((id: string, distance: number) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj => {
+        if (obj.id === id && (obj.mesh instanceof THREE.Line || obj.mesh instanceof THREE.LineLoop)) {
+          const oldGeometry = obj.geometry as THREE.BufferGeometry;
+          const positions = oldGeometry.attributes.position.array;
+          const newPositions: number[] = [];
+
+          for (let i = 0; i < positions.length; i += 3) {
+            const p1 = new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]);
+            let p2;
+            if (i + 3 < positions.length) {
+              p2 = new THREE.Vector3(positions[i + 3], positions[i + 4], positions[i + 5]);
+            } else if (obj.mesh instanceof THREE.LineLoop) {
+              p2 = new THREE.Vector3(positions[0], positions[1], positions[2]); // For closed shapes, connect last to first
+            } else {
+              newPositions.push(p1.x, p1.y, p1.z); // Last point of an open line
+              break;
+            }
+
+            const direction = new THREE.Vector3().subVectors(p2, p1).normalize();
+            const normal = new THREE.Vector3(direction.y, -direction.x, 0); // Perpendicular in XY plane
+            const offsetVector = normal.multiplyScalar(distance);
+
+            const newP1 = p1.clone().add(offsetVector);
+            newPositions.push(newP1.x, newP1.y, newP1.z);
+
+            if (i + 3 >= positions.length && !(obj.mesh instanceof THREE.LineLoop)) {
+              const newP2 = p2.clone().add(offsetVector);
+              newPositions.push(newP2.x, newP2.y, newP2.z);
+            }
+          }
+
+          const newGeometry = new THREE.BufferGeometry();
+          newGeometry.setAttribute(
+            'position',
+            new THREE.Float32BufferAttribute(newPositions, 3)
+          );
+          const newMesh = (obj.mesh instanceof THREE.LineLoop) ? new THREE.LineLoop(newGeometry, obj.material) : new THREE.Line(newGeometry, obj.material);
+          newMesh.name = obj.id;
+          return { ...obj, geometry: newGeometry, mesh: newMesh };
+        }
+        return obj;
+      })
+    );
+  }, []);
+
+  const executeScale = useCallback((id: string, factor: THREE.Vector3) => {
+    setObjects(prevObjects =>
+      prevObjects.map(obj =>
+        obj.id === id
+          ? { ...obj, mesh: obj.mesh.clone().scale(factor.x, factor.y, factor.z) }
+          : obj
+      )
+    );
+  }, []);
+
+  const executeUnion = useCallback((id1: string, id2: string) => {
+    console.warn("executeUnion: Full 3D Boolean operations require a dedicated library (e.g., three-bsp, three-csg). This is a simplified placeholder.");
+    setObjects(prevObjects => {
+      const obj1 = prevObjects.find(obj => obj.id === id1);
+      if (!obj1) return prevObjects; // If obj1 doesn't exist, do nothing
+      // For simplicity, we'll keep obj1 and remove obj2.
+      // A real union would merge their geometries.
+      return prevObjects.filter(obj => obj.id !== id2);
+    });
+  }, []);
+
+  const executeSubtract = useCallback((id1: string, id2: string) => {
+    console.warn("executeSubtract: Full 3D Boolean operations require a dedicated library (e.g., three-bsp, three-csg). This is a simplified placeholder.");
+    setObjects(prevObjects => {
+      // For simplicity, we'll remove both objects. A real subtract would modify obj1 by subtracting obj2.
+      return prevObjects.filter(obj => obj.id !== id1 && obj.id !== id2);
+    });
+  }, []);
+
+  const executeErase = useCallback((id: string) => {
+    setObjects(prevObjects => prevObjects.filter(obj => obj.id !== id));
+    setSelectedId(prevId => (prevId === id ? null : prevId));
+  }, []);
+
+  // --- Initial Setup and Render Loop ---
+  useEffect(() => {
+    if (!canvasRef.current) return;
+
+    // Scene
+    scene.current.background = new THREE.Color(0xf0f0f0);
+
+    // Renderer
+    renderer.current = new THREE.WebGLRenderer({ antialias: true });
+    renderer.current.setSize(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
+    canvasRef.current.appendChild(renderer.current.domElement);
+
+    // Camera (initial setup, will be synced by syncCameraMatrix)
+    camera.current = new THREE.PerspectiveCamera(75, canvasRef.current.clientWidth / canvasRef.current.clientHeight, 0.1, 1000);
+    camera.current.position.set(100, 100, 100);
+    camera.current.lookAt(scene.current.position);
+
+    // Controls
+    controls.current = new OrbitControls(camera.current, renderer.current.domElement);
+    controls.current.enableDamping = true;
+    controls.current.dampingFactor = 0.05;
+
+    // Grid Helper
+    const gridHelper = new THREE.GridHelper(200, 20);
+    scene.current.add(gridHelper);
+
+    // Axes Helper
+    const axesHelper = new THREE.AxesHelper(50);
+    scene.current.add(axesHelper);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x606060);
+    scene.current.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(1, 1, 1).normalize();
+    scene.current.add(directionalLight);
+
+    const animate = () => {
+      requestAnimationFrame(animate);
+      controls.current?.update();
+      renderer.current?.render(scene.current, camera.current!);
     };
-    host.addEventListener('wheel', handleWheel, { passive: false });
+    animate();
+
+    const handleResize = () => {
+      if (camera.current && renderer.current && canvasRef.current) {
+        const width = canvasRef.current.clientWidth;
+        const height = canvasRef.current.clientHeight;
+        if (camera.current instanceof THREE.PerspectiveCamera) {
+          camera.current.aspect = width / height;
+        } else if (camera.current instanceof THREE.OrthographicCamera) {
+          const frustumSize = 100;
+          camera.current.left = frustumSize * (width / height) / -2;
+          camera.current.right = frustumSize * (width / height) / 2;
+          camera.current.top = frustumSize / 2;
+          camera.current.bottom = frustumSize / -2;
+        }
+        camera.current.updateProjectionMatrix();
+        renderer.current.setSize(width, height);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    // Initial state save
+    saveState();
 
     return () => {
-      host.removeEventListener('wheel', handleWheel);
-      host.removeEventListener('mousedown', onMouseDown);
-      host.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('resize', handleResize);
+      cleanupMemory();
     };
-  }, [workspaceSize, gridSpacing, currentTool, objects, selectedId, orthoMode, snapToGrid, viewMode]);
+  }, [cleanupMemory, saveState]);
 
+  // Effect to update scene when objects change
   useEffect(() => {
-    if (gridHelperRef.current && sceneRef.current) {
-      sceneRef.current.remove(gridHelperRef.current);
-      const divisions = Math.round(workspaceSize / gridSpacing);
-      const grid = new THREE.GridHelper(workspaceSize, divisions > 0 ? divisions : 50, 0x4f46e5, isDarkMode ? 0x334155 : 0xcbd5e1);
-      sceneRef.current.add(grid);
-      gridHelperRef.current = grid;
-      sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0f172a : 0xf8fafc);
-    }
-  }, [isDarkMode, workspaceSize, gridSpacing]);
+    // Clear existing meshes from scene
+    scene.current.children = scene.current.children.filter(child =>
+      !(child instanceof THREE.Mesh)
+    );
 
-  // Object Render Pipeline + Dynamic HUD Labels
-  useEffect(() => {
-    if (!sceneRef.current) return;
-    visualObjectsRef.current.forEach((mesh) => sceneRef.current.remove(mesh));
-    visualObjectsRef.current.clear();
+    objects.forEach(obj => {
+      scene.current.add(obj.mesh);
+    });
 
-    objects.forEach((obj) => {
-      if (!obj || !obj.points) return;
-      const isSelected = obj.id === selectedId;
-      const colorHex = isSelected ? 0xef4444 : new THREE.Color(obj.color || '#3b82f6').getHex();
-      const group = new THREE.Group();
-
-      if (obj.is3D && obj.extrusionHeight) {
-        const shape = new THREE.Shape();
-        if (obj.points.length > 1) {
-          shape.moveTo(obj.points[0].x, obj.points[0].y);
-          for (let i = 1; i < obj.points.length; i++) { shape.lineTo(obj.points[i].x, obj.points[i].y); }
-          shape.lineTo(obj.points[0].x, obj.points[0].y);
-
-          const geo = new THREE.ExtrudeGeometry(shape, { depth: obj.extrusionHeight, bevelEnabled: false });
-          geo.rotateX(-Math.PI / 2);
-          const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.4, side: THREE.DoubleSide });
-          const mesh = new THREE.Mesh(geo, mat);
-          group.add(mesh);
-        }
-      } else {
-        const vecPoints: THREE.Vector3[] = [];
-        obj.points.forEach((p) => { if (p) vecPoints.push(new THREE.Vector3(p.x, 0.5, p.y)); });
-        
-        if (obj.type !== 'line' && obj.type !== 'polyline' && vecPoints.length > 0) {
-          vecPoints.push(vecPoints[0].clone());
-        }
-
-        if (vecPoints.length > 0) {
-          const geo = new THREE.BufferGeometry().setFromPoints(vecPoints);
-          const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colorHex, linewidth: 3, depthTest: false }));
-          line.renderOrder = 10;
-          group.add(line);
-        }
-
-        if (isSelected && obj.points.length >= 2) {
-          const p1 = obj.points[0]; const p2 = obj.points[obj.points.length - 1];
-          let text = obj.type === 'circle' && obj.properties?.radius ? `R:${obj.properties.radius}${unit}` : `${Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y))}${unit}`;
-          const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 64;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 20px monospace'; ctx.fillText(text, 5, 36);
-            const texture = new THREE.CanvasTexture(canvas);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
-            sprite.position.set((p1.x + p2.x) / 2, 4, (p1.y + p2.y) / 2); sprite.scale.set(18, 9, 1);
-            group.add(sprite);
+    // Highlight selected object
+    scene.current.children.forEach(child => {
+      if (child instanceof THREE.Mesh) {
+        const cadObject = objects.find(o => o.id === child.name);
+        if (cadObject) {
+          // Reset material to original if not selected
+          if (cadObject.id !== selectedId) {
+            child.material = cadObject.material;
+          } else {
+            // Apply highlight material if selected
+            // This is a simplified highlight, a proper implementation might involve a custom shader or outline pass
+            child.material = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true });
           }
         }
       }
-      sceneRef.current.add(group);
-      visualObjectsRef.current.set(obj.id, group);
     });
-  }, [objects, selectedId, unit]);
 
-  const updateSelectedObjectDimensions = (propertyMap: Record<string, number>) => {
-    if (!selectedId) return;
-    updateHistory(objects.map((obj) => {
-      if (obj.id !== selectedId) return obj;
-      const origin = obj.points[0] || { x: 0, y: 0 };
-      if (obj.type === 'circle' && propertyMap.radius) {
-        const r = propertyMap.radius; const pts = [];
-        for (let i = 0; i < 64; i++) { const a = (i / 64) * Math.PI * 2; pts.push({ x: origin.x + Math.cos(a) * r, y: origin.y + Math.sin(a) * r }); }
-        return { ...obj, points: pts, properties: { ...obj.properties, radius: r } };
-      }
-      return obj;
-    }));
-  };
+    // Save state after objects update
+    saveState();
+  }, [objects, selectedId, saveState]);
 
-  // FULLY UN-STRIPPED GEOMETRIC ENGINE UTILITIES
-
-  const executeFillet = () => {
-    if (!selectedId) return;
-    const target = objects.find(o => o.id === selectedId);
-    if (!target || target.points.length < 2) return;
-
-    const input = prompt("Enter Fillet Corner Radius:", "10");
-    if (!input) return;
-    const filletRad = parseFloat(input) || 10;
-
-    const fPts: Point2D[] = [];
-    const total = target.points.length;
-    
-    for (let i = 0; i < total; i++) {
-      const p1 = target.points[i];
-      const p2 = target.points[(i + 1) % total];
-      
-      fPts.push(p1);
-      if (target.type === 'line' && total === 2 && i === 1) break; 
-
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const shift = Math.min(filletRad, d * 0.4);
-      if (d > 0) {
-        fPts.push({
-          x: p1.x + ((p2.x - p1.x) / d) * shift,
-          y: p1.y + ((p2.y - p1.y) / d) * shift
-        });
-      }
-    }
-    updateHistory(objects.map(o => o.id === selectedId ? { ...o, points: fPts } : o));
-    setHudFeedback(`Applied radius fillet modification.`);
-  };
-
-  const executeTrim = () => {
-    if (!selectedId) return;
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      newPoints[newPoints.length - 1] = {
-        x: p1.x + (p2.x - p1.x) * 0.75,
-        y: p1.y + (p2.y - p1.y) * 0.75
-      };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Trim operation calculated successfully.");
-  };
-
-  const executeExtend = () => {
-    if (!selectedId) return;
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      const newPoints = [...o.points];
-      const p1 = newPoints[newPoints.length - 2];
-      const p2 = newPoints[newPoints.length - 1];
-      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
-      newPoints[newPoints.length - 1] = {
-        x: p2.x + ((p2.x - p1.x) / d) * 20,
-        y: p2.y + ((p2.y - p1.y) / d) * 20
-      };
-      return { ...o, points: newPoints };
-    }));
-    setHudFeedback("Extended path vectors forward.");
-  };
-
-  const executeRotate = () => {
-    if (!selectedId) return;
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      const angle = Math.PI / 12; // 15 Degrees Incremental steps
-      return {
-        ...o,
-        points: o.points.map(p => ({
-          x: p.x * Math.cos(angle) - p.y * Math.sin(angle),
-          y: p.x * Math.sin(angle) + p.y * Math.cos(angle)
-        }))
-      };
-    }));
-    setHudFeedback("Rotated object 15 degrees CCW.");
-  };
-
-  const executeOffset = () => {
-    if (!selectedId) return;
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId || o.points.length < 2) return o;
-      return {
-        ...o,
-        points: o.points.map(p => ({ x: p.x + 12, y: p.y + 12 }))
-      };
-    }));
-    setHudFeedback("Generated baseline path offset.");
-  };
-
-  const executeScale = () => {
-    if (!selectedId) return;
-    updateHistory(objects.map(o => {
-      if (o.id !== selectedId) return o;
-      return {
-        ...o,
-        points: o.points.map(p => ({ x: p.x * 1.25, y: p.y * 1.25 }))
-      };
-    }));
-    setHudFeedback("Scaled up model element size by 25%.");
-  };
-
-  const executeUnion = () => {
-    if (!selectedId) return;
-    setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#0ea5e9', layer: 'combined_union' } : o));
-    setHudFeedback("Combined entities under shared vector system.");
-  };
-
-  const executeSubtract = () => {
-    if (!selectedId) return;
-    setObjects(prev => prev.map(o => o.id === selectedId ? { ...o, color: '#ef4444', properties: { ...o.properties, booleanMode: 'subtraction' } } : o));
-    setHudFeedback("Applied geometric subtraction properties.");
-  };
-
-  const executeNewProject = () => { setObjects([]); setSelectedId(null); chainAnchorRef.current = null; polylinePointsRef.current = []; setHistory([[]]); setHistoryIndex(0); setHudFeedback("Cleared Workspace Grid."); };
-  const executeSaveProject = () => { localStorage.setItem('minicad_v3_core', JSON.stringify(objects)); setHudFeedback("Saved layout locally."); };
-  const executeLoadProject = () => { const save = localStorage.getItem('minicad_v3_core'); if (save) { try { const parsed = JSON.parse(save); if (Array.isArray(parsed)) { const clean = parsed.filter(o => o && Array.isArray(o.points)); setObjects(clean); setHistory([clean]); setHistoryIndex(0); setHudFeedback("Model reloaded correctly."); return; } } catch(e) {} } };
-  
-  const executeExtrude = () => { if (!selectedId) return; const input = prompt("Enter precise extrusion depth dimension:", "40"); if (!input) return; const depth = parseFloat(input) || 40; updateHistory(objects.map(o => o.id === selectedId ? { ...o, is3D: true, extrusionHeight: depth } : o)); setViewMode('isometric'); };
-  
-  const executePolarArray = () => { if (!selectedId) return; const input = prompt("Enter number of instances for circular replication:", "6"); if (!input) return; const count = parseInt(input) || 6; const target = objects.find(o => o.id === selectedId); if (!target) return; const arrayed: CADObject[] = []; for (let i = 1; i < count; i++) { const angle = (i / count) * Math.PI * 2; const rotatedPoints = target.points.map(p => ({ x: p.x * Math.cos(angle) - p.y * Math.sin(angle), y: p.x * Math.sin(angle) + p.y * Math.cos(angle) })); arrayed.push({ ...target, id: generateId(), points: rotatedPoints }); } updateHistory([...objects, ...arrayed]); };
-  
-  const executeCopy = () => { const target = objects.find(o => o.id === selectedId); if (target) setClipboard(target); };
-  const executePaste = () => { if (!clipboard) return; const pasted = { ...clipboard, id: generateId(), points: clipboard.points.map(p => ({ x: p.x + 15, y: p.y + 15 })) }; updateHistory([...objects, pasted]); };
-  const executeErase = () => { if (selectedId) { updateHistory(objects.filter(o => o.id !== selectedId)); setSelectedId(null); } };
-  const executeExportPDF = () => { if (rendererRef.current) window.open(rendererRef.current.domElement.toDataURL('image/png'), '_blank'); };
+  // Effect to sync camera when viewMode or orthoMode changes
+  useEffect(() => {
+    syncCameraMatrix();
+  }, [viewMode, orthoMode, syncCameraMatrix]);
 
   return {
-    containerRef, objects, selectedId, setSelectedId, currentTool, unit, snapToGrid, setSnapToGrid, orthoMode, setOrthoMode,
-    getSelectedObject: () => objects.find(o => o && o.id === selectedId), updateSelectedObjectDimensions,
-    setCurrentTool: (tool: ToolType) => {
-      if (tool === 'deselect') { chainAnchorRef.current = null; polylinePointsRef.current = []; setObjects(prev => prev.filter(o => o.id !== 'active_pline')); setCurrentTool('select'); return; }
-      setCurrentTool(tool);
-    },
-    viewMode, changeView: (mode: ViewMode) => { setViewMode(mode); syncCameraMatrix(mode); },
-    isDarkMode, setIsDarkMode, hudFeedback,
-    executeExtrude, executeTrim, executeExtend, executeFillet, executeUnion, executeSubtract, executeErase,
-    executeNewProject, executeSaveProject, executeLoadProject, executeCopy, executePaste, executePolarArray,
-    executeRotate, executeOffset, executeScale, executeIncreaseWorkspace: () => setWorkspaceSize(prev => prev + 150), executeExportPDF,
-    undo: () => { if (historyIndex > 0) { setHistoryIndex(historyIndex - 1); setObjects(history[historyIndex - 1]); } },
-    redo: () => { if (historyIndex < history.length - 1) { setHistoryIndex(historyIndex + 1); setObjects(history[historyIndex + 1]); } }
+    objects,
+    selectedId,
+    viewMode,
+    orthoMode,
+    canvasRef,
+    setOrthoMode,
+    setViewMode,
+    drawLine,
+    drawPolyline,
+    drawRectangle,
+    drawCircle,
+    selectObject,
+    moveObject,
+    executeExtrude,
+    executeFillet,
+    executeTrim,
+    executeExtend,
+    executeRotate,
+    executeOffset,
+    executeScale,
+    executeUnion,
+    executeSubtract,
+    executeErase,
+    undo,
+    redo,
+    cleanupMemory,
   };
-}
+};
