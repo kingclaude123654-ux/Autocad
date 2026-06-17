@@ -1,5 +1,5 @@
+// src/App.tsx
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import * as THREE from 'three';
 import { useCADEngine } from './hooks/useCADEngine';
 
 const S = {
