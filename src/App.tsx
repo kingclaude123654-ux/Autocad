@@ -1,6 +1,6 @@
-// App.tsx
+// src/App.tsx
 import React, { useEffect, useRef, useCallback } from 'react';
-import { useCADEngine } from './useCADEngine';
+import { useCADEngine } from './hooks/useCADEngine';
 import * as THREE from 'three';
 
 const App: React.FC = () => {
@@ -15,10 +15,7 @@ const App: React.FC = () => {
     toggleOrthoMode,
     executeExtrude,
     executeFillet,
-    executeTrim,
-    executeExtend,
     executeRotate,
-    executeOffset,
     executeScale,
     executeErase,
     handleTouchStart,
@@ -51,14 +48,14 @@ const App: React.FC = () => {
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (container) {
-      container.addEventListener('touchstart', handleTouchStart as any, { passive: false });
-      container.addEventListener('touchmove', handleTouchMove as any, { passive: false });
-      container.addEventListener('touchend', handleTouchEnd as any, { passive: false });
+      container.addEventListener('touchstart', handleTouchStart, { passive: false });
+      container.addEventListener('touchmove', handleTouchMove, { passive: false });
+      container.addEventListener('touchend', handleTouchEnd, { passive: false });
       
       return () => {
-        container.removeEventListener('touchstart', handleTouchStart as any);
-        container.removeEventListener('touchmove', handleTouchMove as any);
-        container.removeEventListener('touchend', handleTouchEnd as any);
+        container.removeEventListener('touchstart', handleTouchStart);
+        container.removeEventListener('touchmove', handleTouchMove);
+        container.removeEventListener('touchend', handleTouchEnd);
       };
     }
   }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
@@ -77,7 +74,7 @@ const App: React.FC = () => {
   }, [addObject]);
 
   const handleQuickAddSphere = useCallback(() => {
-    const geometry = new THREE.SphereGeometry(0.8, 24, 24); // Reduced segments for mobile
+    const geometry = new THREE.SphereGeometry(0.8, 24, 24);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0xe24a4a,
       roughness: 0.7,
@@ -89,7 +86,7 @@ const App: React.FC = () => {
   }, [addObject]);
 
   const handleQuickAddCylinder = useCallback(() => {
-    const geometry = new THREE.CylinderGeometry(0.8, 0.8, 2, 24); // Reduced segments
+    const geometry = new THREE.CylinderGeometry(0.8, 0.8, 2, 24);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x50c878,
       roughness: 0.7,
@@ -99,6 +96,38 @@ const App: React.FC = () => {
     mesh.position.set(Math.random() * 4 - 2, Math.random() * 4 - 2, Math.random() * 4 - 2);
     addObject(mesh, 'extrude');
   }, [addObject]);
+
+  const handleExtrudeSelected = useCallback(() => {
+    if (state.selectedId) {
+      executeExtrude(state.selectedId, 1);
+    }
+  }, [state.selectedId, executeExtrude]);
+
+  const handleFilletSelected = useCallback(() => {
+    if (state.selectedId) {
+      executeFillet(state.selectedId, 0.3);
+    }
+  }, [state.selectedId, executeFillet]);
+
+  const handleRotateSelected = useCallback(() => {
+    if (state.selectedId) {
+      executeRotate(state.selectedId, 'y', Math.PI / 4);
+    }
+  }, [state.selectedId, executeRotate]);
+
+  const handleScaleSelected = useCallback(() => {
+    if (state.selectedId) {
+      executeScale(state.selectedId, 1.2, 1.2, 1.2);
+    }
+  }, [state.selectedId, executeScale]);
+
+  const handleEraseSelected = useCallback(() => {
+    if (state.selectedId) {
+      executeErase(state.selectedId);
+    }
+  }, [state.selectedId, executeErase]);
+
+  const isSelected = state.selectedId !== null;
 
   return (
     <div style={{ 
@@ -114,7 +143,7 @@ const App: React.FC = () => {
       WebkitUserSelect: 'none',
       touchAction: 'none',
     }}>
-      {/* Mobile-optimized Toolbar - Horizontal Scroll */}
+      {/* Mobile-optimized Top Toolbar - Horizontal Scroll */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -172,10 +201,10 @@ const App: React.FC = () => {
         
         {/* Undo/Redo */}
         <button onClick={undo} style={mobileIconButtonStyle} disabled={state.historyIndex <= 0}>
-          ↩
+          Undo
         </button>
         <button onClick={redo} style={mobileIconButtonStyle} disabled={state.historyIndex >= state.history.length - 1}>
-          ↪
+          Redo
         </button>
       </div>
 
@@ -197,31 +226,31 @@ const App: React.FC = () => {
           onClick={() => setActiveTool('select')}
           style={mobileToolButtonStyle(state.activeTool === 'select')}
         >
-          👆
+          Sel
         </button>
         <button 
           onClick={() => setActiveTool('move')}
           style={mobileToolButtonStyle(state.activeTool === 'move')}
         >
-          ↔️
+          Mov
         </button>
         <button 
           onClick={() => setActiveTool('line')}
           style={mobileToolButtonStyle(state.activeTool === 'line')}
         >
-          📏
+          Line
         </button>
         <button 
           onClick={() => setActiveTool('rectangle')}
           style={mobileToolButtonStyle(state.activeTool === 'rectangle')}
         >
-          ⬜
+          Rect
         </button>
         <button 
           onClick={() => setActiveTool('circle')}
           style={mobileToolButtonStyle(state.activeTool === 'circle')}
         >
-          ⭕
+          Circ
         </button>
       </div>
 
@@ -253,41 +282,41 @@ const App: React.FC = () => {
         justifyContent: 'center',
       }}>
         <button 
-          onClick={() => state.selectedId && executeExtrude(state.selectedId, 1)}
+          onClick={handleExtrudeSelected}
           style={mobileActionButtonStyle}
-          disabled={!state.selectedId}
+          disabled={!isSelected}
         >
           Extrude
         </button>
         <button 
-          onClick={() => state.selectedId && executeFillet(state.selectedId, 0.3)}
+          onClick={handleFilletSelected}
           style={mobileActionButtonStyle}
-          disabled={!state.selectedId}
+          disabled={!isSelected}
         >
           Fillet
         </button>
         <button 
-          onClick={() => state.selectedId && executeRotate(state.selectedId, 'y', Math.PI/4)}
+          onClick={handleRotateSelected}
           style={mobileActionButtonStyle}
-          disabled={!state.selectedId}
+          disabled={!isSelected}
         >
           Rotate
         </button>
         <button 
-          onClick={() => state.selectedId && executeScale(state.selectedId, 1.2, 1.2, 1.2)}
+          onClick={handleScaleSelected}
           style={mobileActionButtonStyle}
-          disabled={!state.selectedId}
+          disabled={!isSelected}
         >
           Scale
         </button>
         <button 
-          onClick={() => state.selectedId && executeErase(state.selectedId)}
+          onClick={handleEraseSelected}
           style={{
             ...mobileActionButtonStyle,
             backgroundColor: '#e94560',
             color: '#ffffff',
           }}
-          disabled={!state.selectedId}
+          disabled={!isSelected}
         >
           Delete
         </button>
@@ -356,12 +385,12 @@ const mobileButtonStyle = (active: boolean): React.CSSProperties => ({
 });
 
 const mobileIconButtonStyle: React.CSSProperties = {
-  padding: '8px',
+  padding: '8px 12px',
   backgroundColor: '#0f3460',
   color: 'white',
   border: 'none',
   borderRadius: '6px',
-  fontSize: '18px',
+  fontSize: '12px',
   minWidth: '44px',
   minHeight: '44px',
   display: 'flex',
@@ -372,16 +401,14 @@ const mobileIconButtonStyle: React.CSSProperties = {
 };
 
 const mobileToolButtonStyle = (active: boolean): React.CSSProperties => ({
-  padding: '8px',
+  padding: '8px 12px',
   backgroundColor: active ? '#e94560' : '#0f3460',
   color: 'white',
   border: 'none',
-  borderRadius: '50%',
-  fontSize: '20px',
+  borderRadius: '20px',
+  fontSize: '12px',
   minWidth: '44px',
   minHeight: '44px',
-  width: '44px',
-  height: '44px',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
