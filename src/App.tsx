@@ -29,12 +29,9 @@ const App: React.FC = () => {
     if (canvasContainerRef.current) {
       initScene(canvasContainerRef.current);
     }
-
     window.addEventListener('resize', handleResize);
-    
     document.body.style.overscrollBehavior = 'none';
     document.body.style.touchAction = 'none';
-    
     return () => {
       window.removeEventListener('resize', handleResize);
       document.body.style.overscrollBehavior = '';
@@ -44,17 +41,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const container = canvasContainerRef.current;
-    if (container) {
-      container.addEventListener('touchstart', handleTouchStart, { passive: false });
-      container.addEventListener('touchmove', handleTouchMove, { passive: false });
-      container.addEventListener('touchend', handleTouchEnd, { passive: false });
-      
-      return () => {
-        container.removeEventListener('touchstart', handleTouchStart);
-        container.removeEventListener('touchmove', handleTouchMove);
-        container.removeEventListener('touchend', handleTouchEnd);
-      };
-    }
+    if (!container) return;
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: false });
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+    };
   }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   const handleQuickAddBox = useCallback((): void => {
@@ -126,10 +121,10 @@ const App: React.FC = () => {
   const isSelected = state.selectedId !== null;
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
-      height: '100vh', 
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
       width: '100vw',
       backgroundColor: '#1a1a2e',
       color: '#ffffff',
@@ -139,7 +134,6 @@ const App: React.FC = () => {
       WebkitUserSelect: 'none',
       touchAction: 'none',
     }}>
-      {/* Top toolbar */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -147,10 +141,9 @@ const App: React.FC = () => {
         backgroundColor: '#16213e',
         borderBottom: '1px solid #0f3460',
         gap: '6px',
-        WebkitOverflowScrolling: 'touch',
         minHeight: '44px',
         alignItems: 'center',
-      } as React.CSSProperties}>
+      }}>
         <button onClick={() => syncCameraMatrix('isometric')} style={btn(state.viewMode === 'isometric')}>3D</button>
         <button onClick={() => syncCameraMatrix('top')} style={btn(state.viewMode === 'top')}>Top</button>
         <button onClick={() => syncCameraMatrix('front')} style={btn(state.viewMode === 'front')}>Front</button>
@@ -165,8 +158,6 @@ const App: React.FC = () => {
         <button onClick={undo} style={iconBtn} disabled={state.historyIndex <= 0}>Undo</button>
         <button onClick={redo} style={iconBtn} disabled={state.historyIndex >= state.history.length - 1}>Redo</button>
       </div>
-
-      {/* Drawing tools */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -174,21 +165,22 @@ const App: React.FC = () => {
         backgroundColor: '#16213e',
         borderBottom: '1px solid #0f3460',
         gap: '5px',
-        WebkitOverflowScrolling: 'touch',
         minHeight: '40px',
         alignItems: 'center',
-      } as React.CSSProperties}>
+      }}>
         <button onClick={() => setActiveTool('select')} style={toolBtn(state.activeTool === 'select')}>Sel</button>
         <button onClick={() => setActiveTool('move')} style={toolBtn(state.activeTool === 'move')}>Mov</button>
         <button onClick={() => setActiveTool('line')} style={toolBtn(state.activeTool === 'line')}>Line</button>
         <button onClick={() => setActiveTool('rectangle')} style={toolBtn(state.activeTool === 'rectangle')}>Rect</button>
         <button onClick={() => setActiveTool('circle')} style={toolBtn(state.activeTool === 'circle')}>Circ</button>
       </div>
-
-      {/* Canvas */}
-      <div ref={canvasContainerRef} style={canvasStyle} />
-
-      {/* Bottom actions */}
+      <div ref={canvasContainerRef} style={{
+        flex: 1,
+        position: 'relative',
+        overflow: 'hidden',
+        backgroundColor: '#1a1a2e',
+        touchAction: 'none',
+      }} />
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -196,19 +188,16 @@ const App: React.FC = () => {
         backgroundColor: '#16213e',
         borderTop: '1px solid #0f3460',
         gap: '5px',
-        WebkitOverflowScrolling: 'touch',
         minHeight: '44px',
         alignItems: 'center',
         justifyContent: 'center',
-      } as React.CSSProperties}>
+      }}>
         <button onClick={handleExtrudeSelected} style={actBtn} disabled={!isSelected}>Extrude</button>
         <button onClick={handleFilletSelected} style={actBtn} disabled={!isSelected}>Fillet</button>
         <button onClick={handleRotateSelected} style={actBtn} disabled={!isSelected}>Rotate</button>
         <button onClick={handleScaleSelected} style={actBtn} disabled={!isSelected}>Scale</button>
         <button onClick={handleEraseSelected} style={{...actBtn, backgroundColor: '#e94560'}} disabled={!isSelected}>Delete</button>
       </div>
-
-      {/* Quick add */}
       <div style={{
         display: 'flex',
         padding: '6px 8px',
@@ -223,8 +212,6 @@ const App: React.FC = () => {
         <button onClick={handleQuickAddSphere} style={qaddBtn}>+ Sphere</button>
         <button onClick={handleQuickAddCylinder} style={qaddBtn}>+ Cylinder</button>
       </div>
-
-      {/* Status */}
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',
@@ -242,14 +229,6 @@ const App: React.FC = () => {
       </div>
     </div>
   );
-};
-
-const canvasStyle: React.CSSProperties = {
-  flex: 1,
-  position: 'relative',
-  overflow: 'hidden',
-  backgroundColor: '#1a1a2e',
-  touchAction: 'none',
 };
 
 const sep: React.CSSProperties = {
@@ -277,18 +256,46 @@ const btn = (active: boolean): React.CSSProperties => ({
 });
 
 const iconBtn: React.CSSProperties = {
-  ...btn(false),
+  padding: '8px 12px',
+  backgroundColor: '#0f3460',
+  color: 'white',
+  border: 'none',
+  borderRadius: '6px',
   fontSize: '12px',
+  minWidth: '44px',
+  minHeight: '44px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
 };
 
 const toolBtn = (active: boolean): React.CSSProperties => ({
-  ...btn(active),
+  padding: '8px 12px',
+  backgroundColor: active ? '#e94560' : '#0f3460',
+  color: 'white',
+  border: 'none',
   borderRadius: '20px',
+  fontSize: '12px',
+  minWidth: '44px',
+  minHeight: '44px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: 'pointer',
 });
 
 const actBtn: React.CSSProperties = {
-  ...btn(false),
+  padding: '8px 12px',
+  backgroundColor: '#0f3460',
+  color: 'white',
+  border: 'none',
+  borderRadius: '6px',
   fontSize: '11px',
+  fontWeight: 'bold',
+  whiteSpace: 'nowrap',
+  minHeight: '44px',
+  cursor: 'pointer',
 };
 
 const qaddBtn: React.CSSProperties = {
