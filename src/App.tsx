@@ -1,10 +1,10 @@
-// src/App.tsx
 import React, { useEffect, useRef, useCallback } from 'react';
-import { useCADEngine } from './hooks/useCADEngine';
 import * as THREE from 'three';
+import { useCADEngine } from './hooks/useCADEngine';
 
 const App: React.FC = () => {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const engine = useCADEngine();
   const {
     state,
     initScene,
@@ -23,9 +23,8 @@ const App: React.FC = () => {
     handleTouchEnd,
     handleResize,
     addObject,
-  } = useCADEngine();
+  } = engine;
 
-  // Initialize scene on mount with mobile considerations
   useEffect(() => {
     if (canvasContainerRef.current) {
       initScene(canvasContainerRef.current);
@@ -33,7 +32,6 @@ const App: React.FC = () => {
 
     window.addEventListener('resize', handleResize);
     
-    // Prevent default touch behaviors
     document.body.style.overscrollBehavior = 'none';
     document.body.style.touchAction = 'none';
     
@@ -44,7 +42,6 @@ const App: React.FC = () => {
     };
   }, [initScene, handleResize]);
 
-  // Setup touch event handlers
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (container) {
@@ -60,8 +57,7 @@ const App: React.FC = () => {
     }
   }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
 
-  // Quick add functions for mobile testing
-  const handleQuickAddBox = useCallback(() => {
+  const handleQuickAddBox = useCallback((): void => {
     const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x4a90e2,
@@ -73,7 +69,7 @@ const App: React.FC = () => {
     addObject(mesh, 'rectangle');
   }, [addObject]);
 
-  const handleQuickAddSphere = useCallback(() => {
+  const handleQuickAddSphere = useCallback((): void => {
     const geometry = new THREE.SphereGeometry(0.8, 24, 24);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0xe24a4a,
@@ -85,7 +81,7 @@ const App: React.FC = () => {
     addObject(mesh, 'circle');
   }, [addObject]);
 
-  const handleQuickAddCylinder = useCallback(() => {
+  const handleQuickAddCylinder = useCallback((): void => {
     const geometry = new THREE.CylinderGeometry(0.8, 0.8, 2, 24);
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x50c878,
@@ -97,31 +93,31 @@ const App: React.FC = () => {
     addObject(mesh, 'extrude');
   }, [addObject]);
 
-  const handleExtrudeSelected = useCallback(() => {
+  const handleExtrudeSelected = useCallback((): void => {
     if (state.selectedId) {
       executeExtrude(state.selectedId, 1);
     }
   }, [state.selectedId, executeExtrude]);
 
-  const handleFilletSelected = useCallback(() => {
+  const handleFilletSelected = useCallback((): void => {
     if (state.selectedId) {
       executeFillet(state.selectedId, 0.3);
     }
   }, [state.selectedId, executeFillet]);
 
-  const handleRotateSelected = useCallback(() => {
+  const handleRotateSelected = useCallback((): void => {
     if (state.selectedId) {
       executeRotate(state.selectedId, 'y', Math.PI / 4);
     }
   }, [state.selectedId, executeRotate]);
 
-  const handleScaleSelected = useCallback(() => {
+  const handleScaleSelected = useCallback((): void => {
     if (state.selectedId) {
       executeScale(state.selectedId, 1.2, 1.2, 1.2);
     }
   }, [state.selectedId, executeScale]);
 
-  const handleEraseSelected = useCallback(() => {
+  const handleEraseSelected = useCallback((): void => {
     if (state.selectedId) {
       executeErase(state.selectedId);
     }
@@ -143,7 +139,7 @@ const App: React.FC = () => {
       WebkitUserSelect: 'none',
       touchAction: 'none',
     }}>
-      {/* Mobile-optimized Top Toolbar - Horizontal Scroll */}
+      {/* Top toolbar */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -152,63 +148,25 @@ const App: React.FC = () => {
         borderBottom: '1px solid #0f3460',
         gap: '6px',
         WebkitOverflowScrolling: 'touch',
-        msOverflowStyle: 'none',
-        scrollbarWidth: 'none',
         minHeight: '44px',
         alignItems: 'center',
-      }}>
-        {/* View Controls */}
-        <button 
-          onClick={() => syncCameraMatrix('isometric')}
-          style={mobileButtonStyle(state.viewMode === 'isometric')}
-        >
-          3D
-        </button>
-        <button 
-          onClick={() => syncCameraMatrix('top')}
-          style={mobileButtonStyle(state.viewMode === 'top')}
-        >
-          Top
-        </button>
-        <button 
-          onClick={() => syncCameraMatrix('front')}
-          style={mobileButtonStyle(state.viewMode === 'front')}
-        >
-          Front
-        </button>
-        <button 
-          onClick={() => syncCameraMatrix('side')}
-          style={mobileButtonStyle(state.viewMode === 'side')}
-        >
-          Side
-        </button>
-        
-        <div style={{ width: '1px', height: '24px', backgroundColor: '#0f3460', margin: '0 4px' }} />
-        
-        {/* Ortho Toggle */}
-        <button 
-          onClick={toggleOrthoMode}
-          style={{
-            ...mobileButtonStyle(state.orthoMode),
-            backgroundColor: state.orthoMode ? '#e94560' : '#0f3460',
-            fontSize: '11px',
-          }}
-        >
-          {state.orthoMode ? 'Ortho' : 'Persp'}
-        </button>
-        
-        <div style={{ width: '1px', height: '24px', backgroundColor: '#0f3460', margin: '0 4px' }} />
-        
-        {/* Undo/Redo */}
-        <button onClick={undo} style={mobileIconButtonStyle} disabled={state.historyIndex <= 0}>
-          Undo
-        </button>
-        <button onClick={redo} style={mobileIconButtonStyle} disabled={state.historyIndex >= state.history.length - 1}>
-          Redo
-        </button>
+      } as React.CSSProperties}>
+        <button onClick={() => syncCameraMatrix('isometric')} style={btn(state.viewMode === 'isometric')}>3D</button>
+        <button onClick={() => syncCameraMatrix('top')} style={btn(state.viewMode === 'top')}>Top</button>
+        <button onClick={() => syncCameraMatrix('front')} style={btn(state.viewMode === 'front')}>Front</button>
+        <button onClick={() => syncCameraMatrix('side')} style={btn(state.viewMode === 'side')}>Side</button>
+        <div style={sep} />
+        <button onClick={toggleOrthoMode} style={{
+          ...btn(state.orthoMode),
+          backgroundColor: state.orthoMode ? '#e94560' : '#0f3460',
+          fontSize: '11px',
+        }}>{state.orthoMode ? 'Ortho' : 'Persp'}</button>
+        <div style={sep} />
+        <button onClick={undo} style={iconBtn} disabled={state.historyIndex <= 0}>Undo</button>
+        <button onClick={redo} style={iconBtn} disabled={state.historyIndex >= state.history.length - 1}>Redo</button>
       </div>
 
-      {/* Drawing Tools */}
+      {/* Drawing tools */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -217,56 +175,20 @@ const App: React.FC = () => {
         borderBottom: '1px solid #0f3460',
         gap: '5px',
         WebkitOverflowScrolling: 'touch',
-        msOverflowStyle: 'none',
-        scrollbarWidth: 'none',
         minHeight: '40px',
         alignItems: 'center',
-      }}>
-        <button 
-          onClick={() => setActiveTool('select')}
-          style={mobileToolButtonStyle(state.activeTool === 'select')}
-        >
-          Sel
-        </button>
-        <button 
-          onClick={() => setActiveTool('move')}
-          style={mobileToolButtonStyle(state.activeTool === 'move')}
-        >
-          Mov
-        </button>
-        <button 
-          onClick={() => setActiveTool('line')}
-          style={mobileToolButtonStyle(state.activeTool === 'line')}
-        >
-          Line
-        </button>
-        <button 
-          onClick={() => setActiveTool('rectangle')}
-          style={mobileToolButtonStyle(state.activeTool === 'rectangle')}
-        >
-          Rect
-        </button>
-        <button 
-          onClick={() => setActiveTool('circle')}
-          style={mobileToolButtonStyle(state.activeTool === 'circle')}
-        >
-          Circ
-        </button>
+      } as React.CSSProperties}>
+        <button onClick={() => setActiveTool('select')} style={toolBtn(state.activeTool === 'select')}>Sel</button>
+        <button onClick={() => setActiveTool('move')} style={toolBtn(state.activeTool === 'move')}>Mov</button>
+        <button onClick={() => setActiveTool('line')} style={toolBtn(state.activeTool === 'line')}>Line</button>
+        <button onClick={() => setActiveTool('rectangle')} style={toolBtn(state.activeTool === 'rectangle')}>Rect</button>
+        <button onClick={() => setActiveTool('circle')} style={toolBtn(state.activeTool === 'circle')}>Circ</button>
       </div>
 
-      {/* Canvas Container - Main Area */}
-      <div 
-        ref={canvasContainerRef}
-        style={{
-          flex: 1,
-          position: 'relative',
-          overflow: 'hidden',
-          backgroundColor: '#1a1a2e',
-          touchAction: 'none',
-        }}
-      />
+      {/* Canvas */}
+      <div ref={canvasContainerRef} style={canvasStyle} />
 
-      {/* Bottom Action Bar */}
+      {/* Bottom actions */}
       <div style={{
         display: 'flex',
         overflowX: 'auto',
@@ -275,54 +197,18 @@ const App: React.FC = () => {
         borderTop: '1px solid #0f3460',
         gap: '5px',
         WebkitOverflowScrolling: 'touch',
-        msOverflowStyle: 'none',
-        scrollbarWidth: 'none',
         minHeight: '44px',
         alignItems: 'center',
         justifyContent: 'center',
-      }}>
-        <button 
-          onClick={handleExtrudeSelected}
-          style={mobileActionButtonStyle}
-          disabled={!isSelected}
-        >
-          Extrude
-        </button>
-        <button 
-          onClick={handleFilletSelected}
-          style={mobileActionButtonStyle}
-          disabled={!isSelected}
-        >
-          Fillet
-        </button>
-        <button 
-          onClick={handleRotateSelected}
-          style={mobileActionButtonStyle}
-          disabled={!isSelected}
-        >
-          Rotate
-        </button>
-        <button 
-          onClick={handleScaleSelected}
-          style={mobileActionButtonStyle}
-          disabled={!isSelected}
-        >
-          Scale
-        </button>
-        <button 
-          onClick={handleEraseSelected}
-          style={{
-            ...mobileActionButtonStyle,
-            backgroundColor: '#e94560',
-            color: '#ffffff',
-          }}
-          disabled={!isSelected}
-        >
-          Delete
-        </button>
+      } as React.CSSProperties}>
+        <button onClick={handleExtrudeSelected} style={actBtn} disabled={!isSelected}>Extrude</button>
+        <button onClick={handleFilletSelected} style={actBtn} disabled={!isSelected}>Fillet</button>
+        <button onClick={handleRotateSelected} style={actBtn} disabled={!isSelected}>Rotate</button>
+        <button onClick={handleScaleSelected} style={actBtn} disabled={!isSelected}>Scale</button>
+        <button onClick={handleEraseSelected} style={{...actBtn, backgroundColor: '#e94560'}} disabled={!isSelected}>Delete</button>
       </div>
 
-      {/* Quick Add Panel */}
+      {/* Quick add */}
       <div style={{
         display: 'flex',
         padding: '6px 8px',
@@ -333,18 +219,12 @@ const App: React.FC = () => {
         minHeight: '40px',
         alignItems: 'center',
       }}>
-        <button onClick={handleQuickAddBox} style={quickAddButtonStyle}>
-          + Box
-        </button>
-        <button onClick={handleQuickAddSphere} style={quickAddButtonStyle}>
-          + Sphere
-        </button>
-        <button onClick={handleQuickAddCylinder} style={quickAddButtonStyle}>
-          + Cylinder
-        </button>
+        <button onClick={handleQuickAddBox} style={qaddBtn}>+ Box</button>
+        <button onClick={handleQuickAddSphere} style={qaddBtn}>+ Sphere</button>
+        <button onClick={handleQuickAddCylinder} style={qaddBtn}>+ Cylinder</button>
       </div>
 
-      {/* Mobile Status Bar */}
+      {/* Status */}
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',
@@ -364,8 +244,22 @@ const App: React.FC = () => {
   );
 };
 
-// Mobile-optimized style helpers
-const mobileButtonStyle = (active: boolean): React.CSSProperties => ({
+const canvasStyle: React.CSSProperties = {
+  flex: 1,
+  position: 'relative',
+  overflow: 'hidden',
+  backgroundColor: '#1a1a2e',
+  touchAction: 'none',
+};
+
+const sep: React.CSSProperties = {
+  width: '1px',
+  height: '24px',
+  backgroundColor: '#0f3460',
+  margin: '0 4px',
+};
+
+const btn = (active: boolean): React.CSSProperties => ({
   padding: '8px 12px',
   backgroundColor: active ? '#e94560' : '#0f3460',
   color: 'white',
@@ -380,58 +274,24 @@ const mobileButtonStyle = (active: boolean): React.CSSProperties => ({
   alignItems: 'center',
   justifyContent: 'center',
   cursor: 'pointer',
-  WebkitTapHighlightColor: 'transparent',
-  touchAction: 'manipulation',
 });
 
-const mobileIconButtonStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  backgroundColor: '#0f3460',
-  color: 'white',
-  border: 'none',
-  borderRadius: '6px',
+const iconBtn: React.CSSProperties = {
+  ...btn(false),
   fontSize: '12px',
-  minWidth: '44px',
-  minHeight: '44px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  cursor: 'pointer',
-  WebkitTapHighlightColor: 'transparent',
 };
 
-const mobileToolButtonStyle = (active: boolean): React.CSSProperties => ({
-  padding: '8px 12px',
-  backgroundColor: active ? '#e94560' : '#0f3460',
-  color: 'white',
-  border: 'none',
+const toolBtn = (active: boolean): React.CSSProperties => ({
+  ...btn(active),
   borderRadius: '20px',
-  fontSize: '12px',
-  minWidth: '44px',
-  minHeight: '44px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  cursor: 'pointer',
-  WebkitTapHighlightColor: 'transparent',
 });
 
-const mobileActionButtonStyle: React.CSSProperties = {
-  padding: '8px 12px',
-  backgroundColor: '#0f3460',
-  color: 'white',
-  border: 'none',
-  borderRadius: '6px',
+const actBtn: React.CSSProperties = {
+  ...btn(false),
   fontSize: '11px',
-  fontWeight: 'bold',
-  whiteSpace: 'nowrap',
-  minHeight: '44px',
-  cursor: 'pointer',
-  WebkitTapHighlightColor: 'transparent',
-  opacity: 1,
 };
 
-const quickAddButtonStyle: React.CSSProperties = {
+const qaddBtn: React.CSSProperties = {
   padding: '6px 12px',
   backgroundColor: '#533483',
   color: 'white',
@@ -440,7 +300,6 @@ const quickAddButtonStyle: React.CSSProperties = {
   fontSize: '12px',
   minHeight: '36px',
   cursor: 'pointer',
-  WebkitTapHighlightColor: 'transparent',
 };
 
 export default App;
